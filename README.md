@@ -116,6 +116,8 @@ pnpm dev
 
 ### 🔹 Option 2 — Prod with Docker (no hot reload)
 
+Runs `client` (nginx), `server` and `scheduler` as separate containers — scales each independently.
+
 ```bash
 docker compose -f docker-compose-prod.yml up
 ```
@@ -124,6 +126,22 @@ or
 
 ```bash
 make prod
+```
+
+### 🔹 Option 3 — Compact with Docker (single app container)
+
+Merges `client` + `server` + `scheduler` into one `app` container (front served by the API process, cron jobs run in-process) and switches the cache to in-memory — Redis is only used for BullMQ in this mode. Good fit for smaller/single-node deployments. Requires the same infra (`make infra`) and VPN sidecars (`make vpn`) as Option 2 — `prowlarr`, `subtitle-proxy` and `downloader` are unchanged.
+
+⚠️ Mutually exclusive with Option 2 — both define the same container names for shared services (`prowlarr`, `subtitle-proxy`, `migrate`), so don't run them at the same time.
+
+```bash
+docker compose -f docker-compose-compact.yml up
+```
+
+or
+
+```bash
+make compact
 ```
 
 ## 🐳 Pre-built images (GHCR)
@@ -138,6 +156,7 @@ git push origin v1.0.0
 Images are tagged with the git tag (e.g. `v1.0.0`):
 
 - `ghcr.io/mathoyer/hypertube-server:<tag>`
+- `ghcr.io/mathoyer/hypertube-app:<tag>` (compact mode — front + API + scheduler in one image)
 - `ghcr.io/mathoyer/hypertube-downloader:<tag>`
 - `ghcr.io/mathoyer/hypertube-scheduler:<tag>`
 - `ghcr.io/mathoyer/hypertube-subtitle-proxy:<tag>`
@@ -182,7 +201,8 @@ pnpm add <package-name>
 
 - Developed with **Vite**
 - Runs in dev on: [http://localhost:3001](http://localhost:3001)
-- In production: rendered by the server
+- In prod (Option 2): served by its own nginx container
+- In compact mode (Option 3): built into and served by the `server`/`app` image (`SERVE_FRONT=true`)
 
 ---
 
@@ -196,6 +216,7 @@ pnpm add <package-name>
 
 - **Hono** server
 - Runs in dev on: [http://localhost:3000](http://localhost:3000)
+- Env toggles used in compact mode: `SERVE_FRONT` (serve the built client), `RUN_SCHEDULER` (run cron jobs in-process), `CACHE_DRIVER` (`redis` or `memory`, default `redis`)
 
 ---
 
@@ -214,6 +235,7 @@ pnpm add <package-name>
 ### ⚙️ Scheduler (`apps/scheduler`)
 
 - Worker to run cron jobs
+- In compact mode this container is dropped — the same jobs (shared via `packages/server-core`) run inside the `server`/`app` process instead (`RUN_SCHEDULER=true`)
 
 ### ⚙️ Prowlarr (torrent provider)
 
