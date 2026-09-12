@@ -179,7 +179,6 @@ CREATE TABLE "Session" (
 -- CreateTable
 CREATE TABLE "Account" (
     "id" TEXT NOT NULL,
-    "issuer" TEXT NOT NULL,
     "accountId" TEXT NOT NULL,
     "providerId" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
@@ -264,7 +263,7 @@ CREATE UNIQUE INDEX "Session_token_key" ON "Session"("token");
 CREATE INDEX "Account_userId_idx" ON "Account"("userId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "account_issuer_accountId_uidx" ON "Account"("issuer", "accountId");
+CREATE UNIQUE INDEX "Account_accountId_key" ON "Account"("accountId");
 
 -- CreateIndex
 CREATE INDEX "Verification_identifier_idx" ON "Verification"("identifier");
