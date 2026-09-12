@@ -9,6 +9,8 @@ updates:
     directory: "/" # Location of package manifests
     schedule:
       interval: "weekly"
+    reviewers:
+      - "NicolasRomanoff"
     cooldown:
       default-days: 2
     groups:
