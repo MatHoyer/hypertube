@@ -3,6 +3,7 @@ import {
   languageCodesArray,
   zodTranslate,
 } from "@hypertube/libs";
+import { serveStatic } from "@hono/node-server/serve-static";
 import { env } from "@hypertube/server-core";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -76,6 +77,13 @@ export function createApp() {
   apiRouter.get("/health", (c) => c.text("OK"));
 
   app.route("/api", apiRouter);
+
+  if (env.SERVE_FRONT) {
+    const CLIENT_DIST_ROOT = "../client/dist";
+
+    app.use("*", serveStatic({ root: CLIENT_DIST_ROOT }));
+    app.get("*", serveStatic({ path: `${CLIENT_DIST_ROOT}/index.html` }));
+  }
 
   return app;
 }

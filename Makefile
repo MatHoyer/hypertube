@@ -1,4 +1,4 @@
-.PHONY: network vpn stop-vpn logs-vpn refresh-vpn-sidecars infra stop-infra logs-infra helpers stop-helpers logs-helpers prod stop-prod logs-prod stop-all rebuild-prod reset
+.PHONY: network vpn stop-vpn logs-vpn refresh-vpn-sidecars infra stop-infra logs-infra helpers stop-helpers logs-helpers prod stop-prod logs-prod compact stop-compact logs-compact stop-all rebuild-prod rebuild-compact reset
 
 # External network shared by all compose files. Idempotent: no-op if it already exists.
 network:
@@ -56,6 +56,18 @@ stop-prod:
 logs-prod:
 	docker compose -f docker-compose-prod.yml logs -f
 
+# Compact (single app container: front + API + scheduler). Mutually exclusive
+# with `prod` — both define the same container names for shared services
+# (prowlarr, subtitle-proxy, migrate), so do not run both at once.
+compact: infra
+	docker compose -f docker-compose-compact.yml up -d
+
+stop-compact:
+	docker compose -f docker-compose-compact.yml down
+
+logs-compact:
+	docker compose -f docker-compose-compact.yml logs -f
+
 # Stop everything
 stop-all: stop-prod stop-vpn stop-helpers stop-infra
 
@@ -74,6 +86,10 @@ rebuild-helpers: stop-helpers
 rebuild-prod: stop-prod
 	docker compose -f docker-compose-prod.yml build --no-cache
 	$(MAKE) prod
+
+rebuild-compact: stop-compact
+	docker compose -f docker-compose-compact.yml build --no-cache
+	$(MAKE) compact
 
 reset: stop-all
 	docker system prune -af && docker volume prune -af
