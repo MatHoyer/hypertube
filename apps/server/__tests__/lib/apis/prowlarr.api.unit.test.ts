@@ -19,7 +19,7 @@ vi.mock("@hypertube/server-core", () => ({
     filename: string
   ) => `${movieId}/${itemType}/${itemId}/${filename}`,
   RedisCacheService: class {},
-  MinioStorageService: class {
+  S3StorageService: class {
     putObject = mockPutObject;
   },
 }));

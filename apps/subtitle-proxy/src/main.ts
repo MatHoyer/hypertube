@@ -3,7 +3,7 @@ import { hypertubeLogger, subtitleSchema } from "@hypertube/libs";
 import {
   env,
   IStorageService,
-  MinioStorageService,
+  S3StorageService,
 } from "@hypertube/server-core";
 import { Hono } from "hono";
 import {
@@ -11,7 +11,7 @@ import {
   getSubtitlesDownloadLinks,
 } from "./scrappers/yifysubtitles.scrapper";
 
-export const storageService: IStorageService = new MinioStorageService();
+export const storageService: IStorageService = new S3StorageService();
 
 const app = new Hono();
 

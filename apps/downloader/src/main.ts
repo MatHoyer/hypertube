@@ -2,9 +2,9 @@ import { hypertubeLogger } from "@hypertube/libs";
 import {
   env,
   IStorageService,
-  MinioStorageService,
   MOVIE_QUEUE,
   MOVIE_QUEUE_JOB_NAMES,
+  S3StorageService,
   TDownloadJobData,
 } from "@hypertube/server-core";
 import { Job, Worker } from "bullmq";
@@ -17,7 +17,7 @@ import {
 } from "./handlers/movie/download-movie.handler.js";
 import { gracefulShutdown } from "./shutdown.js";
 
-export const storageService: IStorageService = new MinioStorageService();
+export const storageService: IStorageService = new S3StorageService();
 
 const connection = new Redis({
   host: env.REDIS_HOST,
