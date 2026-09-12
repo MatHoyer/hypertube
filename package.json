@@ -51,7 +51,8 @@
   "packageManager": "pnpm@10.13.1",
   "pnpm": {
     "overrides": {
-      "bullmq>ioredis": "$ioredis"
+      "bullmq>ioredis": "$ioredis",
+      "zod": "4.5.1"
     }
   },
   "devDependencies": {
