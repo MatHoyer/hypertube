@@ -31,6 +31,8 @@ jobs:
         include:
           - name: server
             dockerfile: ./apps/server/Dockerfile.prod
+          - name: app
+            dockerfile: ./apps/server/Dockerfile.compact
           - name: downloader
             dockerfile: ./apps/downloader/Dockerfile.prod
           - name: scheduler

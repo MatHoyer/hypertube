@@ -1,5 +1,5 @@
 import { TLogger } from "@hypertube/libs";
-import { cronUTC } from "../cronUTC.js";
+import { cronUTC } from "./cronUTC.js";
 
 const HEALTHCHECK_CRON_EXPRESSION = "0 */1 * * * *";
 const HEALTHCHECK_CRON_NAME = "Healthcheck";

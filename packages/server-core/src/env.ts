@@ -66,6 +66,9 @@ const envSchema = z.object({
   REDIS_PORT: z.coerce.number(),
   VPN_IS_ACTIVE: z.coerce.boolean().default(false),
   NODE_ENV: z.enum(["DEV", "PROD"]).default("DEV"),
+  SERVE_FRONT: z.coerce.boolean().optional().default(false),
+  RUN_SCHEDULER: z.coerce.boolean().optional().default(false),
+  CACHE_DRIVER: z.enum(["redis", "memory"]).optional().default("redis"),
 });
 
 const rawEnv = { ...process.env };
