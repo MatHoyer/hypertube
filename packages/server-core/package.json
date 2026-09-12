@@ -28,7 +28,9 @@
     "@hypertube/libs": "workspace:*",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
+    "date-fns": "^4.3.0",
     "dotenv": "^17.2.0",
+    "node-cron": "^4.2.1",
     "uuid": "^14.0.0"
   },
   "devDependencies": {
