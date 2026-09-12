@@ -1,8 +1,8 @@
 import {
   ICacheService,
   IStorageService,
-  MinioStorageService,
   RedisCacheService,
+  S3StorageService,
 } from "@hypertube/server-core";
 
 export const container: {
@@ -10,5 +10,5 @@ export const container: {
   storageService: IStorageService;
 } = {
   cacheService: new RedisCacheService(),
-  storageService: new MinioStorageService(),
+  storageService: new S3StorageService(),
 };

@@ -1,12 +1,16 @@
 FROM debian:12-slim
 
+ARG RC_VERSION=0.1.35
+
 RUN apt-get update
 RUN apt-get install sed -y
 RUN apt-get install wget -y
 
-RUN wget https://dl.min.io/client/mc/release/linux-amd64/mc
+RUN wget https://github.com/rustfs/cli/releases/download/v${RC_VERSION}/rustfs-cli-linux-amd64-v${RC_VERSION}.tar.gz \
+    && tar xzf rustfs-cli-linux-amd64-v${RC_VERSION}.tar.gz \
+    && rm rustfs-cli-linux-amd64-v${RC_VERSION}.tar.gz
 
-RUN chmod +x mc
+RUN chmod +x rc
 
 COPY /scripts/s3-init.sh ./
 COPY /scripts/s3-cors-config.xml ./
