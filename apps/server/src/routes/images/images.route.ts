@@ -19,7 +19,7 @@ imagesRouter.post(
   bodyLimit({
     maxSize: sizeMaxFile,
     onError: (c) => {
-      return c.json({ error: "File too large" }, 413);
+      return c.json({ message: "File too large" }, 413);
     },
   }),
   bodyParser(postImageSchemas.requirements, "formData"),

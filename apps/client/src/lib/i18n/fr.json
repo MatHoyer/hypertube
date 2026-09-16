@@ -91,6 +91,7 @@
     "deletePicture": "Supprimer votre photo de profil",
     "updatePicture": "Votre photo de profil a été mis à jour.",
     "updatePictureFailed": "Échec de la mise à jour de votre photo de profil.",
+    "updatePictureTooLarge": "Image trop volumineuse ({{size}}). Taille max : {{maxSize}}.",
     "unlinkMessage": "Dissociation réussie.",
     "link": "Associer",
     "unlink": "Dissocier",

@@ -91,6 +91,7 @@
     "deletePicture": "Delete your profile picture",
     "updatePicture": "Profile picture successfully updated.",
     "updatePictureFailed": "Failed to update your profile picture.",
+    "updatePictureTooLarge": "Image is too large ({{size}}). Max size is {{maxSize}}.",
     "unlinkMessage": "Successful unlink.",
     "link": "Link",
     "unlink": "Unlink",
