@@ -10,11 +10,14 @@ import {
   patchUsersSchemas,
   postImageSchemas,
   ROUTES,
+  sizeMaxFile,
 } from "@hypertube/libs";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import z from "zod";
+
+const formatMB = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 
 export const ProfilePictureUpdate = () => {
   const user = useRequiredUser();
@@ -59,7 +62,16 @@ export const ProfilePictureUpdate = () => {
       });
       toast.success(t("settings.updatePicture"));
     },
-    onError: () => {
+    onError: (_error, file) => {
+      if (file && file.size > sizeMaxFile) {
+        toast.error(
+          t("settings.updatePictureTooLarge", {
+            size: formatMB(file.size),
+            maxSize: formatMB(sizeMaxFile),
+          })
+        );
+        return;
+      }
       toast.error(t("settings.updatePictureFailed"));
     },
   });
@@ -102,8 +114,19 @@ export const ProfilePictureUpdate = () => {
         type="file"
         className="w-full"
         onChange={(event) => {
-          updateMutate(event.currentTarget.files?.[0]);
+          const file = event.currentTarget.files?.[0];
           event.currentTarget.value = "";
+          if (!file) return;
+          if (file.size > sizeMaxFile) {
+            toast.error(
+              t("settings.updatePictureTooLarge", {
+                size: formatMB(file.size),
+                maxSize: formatMB(sizeMaxFile),
+              })
+            );
+            return;
+          }
+          updateMutate(file);
         }}
       />
       <LoadingButton
