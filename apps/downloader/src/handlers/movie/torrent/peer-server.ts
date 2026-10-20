@@ -1,6 +1,7 @@
 import { formatUnknownError, hypertubeLogger } from "@hypertube/libs";
 import * as net from "node:net";
 import Wire from "bittorrent-protocol";
+import { PeerConnection } from "./peer-connection.js";
 
 export interface SeedSource {
   hasPiece(index: number): boolean;
@@ -35,20 +36,32 @@ export class PeerServer {
   private readonly peerId: string;
   private readonly sources = new Map<string, SeedSource>();
   private readonly pieceCounts = new Map<string, number>();
+  /** Set while a torrent is still downloading: inbound peers are handed over so we download from them too, not only seed to them. */
+  private readonly onInboundPeer = new Map<string, (connection: PeerConnection) => void>();
   private server: net.Server | null = null;
 
   constructor(peerId: string) {
     this.peerId = peerId;
   }
 
-  register(infoHash: string, pieceCount: number, source: SeedSource): void {
-    this.sources.set(infoHash.toLowerCase(), source);
-    this.pieceCounts.set(infoHash.toLowerCase(), pieceCount);
+  register(
+    infoHash: string,
+    pieceCount: number,
+    source: SeedSource,
+    onInboundPeer?: (connection: PeerConnection) => void
+  ): void {
+    const key = infoHash.toLowerCase();
+    this.sources.set(key, source);
+    this.pieceCounts.set(key, pieceCount);
+    if (onInboundPeer) this.onInboundPeer.set(key, onInboundPeer);
+    else this.onInboundPeer.delete(key);
   }
 
   unregister(infoHash: string): void {
-    this.sources.delete(infoHash.toLowerCase());
-    this.pieceCounts.delete(infoHash.toLowerCase());
+    const key = infoHash.toLowerCase();
+    this.sources.delete(key);
+    this.pieceCounts.delete(key);
+    this.onInboundPeer.delete(key);
   }
 
   isRegistered(infoHash: string): boolean {
@@ -104,6 +117,7 @@ export class PeerServer {
       wire.handshake(infoHash, this.peerId);
       wire.bitfield(buildBitfield(source, pieceCount));
       wire.unchoke();
+      this.onInboundPeer.get(key)?.(PeerConnection.fromInbound(socket, wire));
     });
 
     wire.on(

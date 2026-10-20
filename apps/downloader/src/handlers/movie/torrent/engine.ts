@@ -161,11 +161,17 @@ export const startDownload = async (
   handle.pieceManager = pieceManager;
 
   const peerServer = await getPeerServer();
-  peerServer.register(infoHash, handle.metadata.pieces.length, pieceManager);
+  peerServer.register(
+    infoHash,
+    handle.metadata.pieces.length,
+    pieceManager,
+    (connection) => handle.pool.adopt(connection)
+  );
 
   pieceManager.once("done", () => {
     // Nothing left to fetch — stop dialing out, but stay registered as a
     // seed (PeerServer only needs the PieceManager instance, not the pool).
+    peerServer.register(infoHash, handle.metadata.pieces.length, pieceManager);
     stopDownloading(infoHash);
   });
 

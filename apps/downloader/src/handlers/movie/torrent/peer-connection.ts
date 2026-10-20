@@ -13,9 +13,9 @@ const REQUEST_TIMEOUT_MS = 30000;
 export const BLOCK_LENGTH = 16 * 1024;
 
 /**
- * One dialed-out TCP connection to a peer, wrapped in the BitTorrent wire
- * protocol. Leech-only (see roadmap: "No incoming connections required") —
- * this module only ever dials, never listens. Piece selection/requesting
+ * One TCP connection to a peer, wrapped in the BitTorrent wire protocol —
+ * either dialed out (connect) or accepted by PeerServer and handed over
+ * (fromInbound); this module never listens itself. Piece selection/requesting
  * strategy lives in piece-manager.ts (Phase 4); this class only exposes the
  * wire mechanics (handshake, choke state, block requests) that piece-manager
  * drives.
@@ -26,13 +26,37 @@ export class PeerConnection extends EventEmitter {
   private socket: net.Socket | null = null;
   private destroyed = false;
 
-  private constructor(address: PeerAddress) {
+  private constructor(address: PeerAddress, wire?: Wire) {
     super();
     this.address = address;
-    this.wire = new Wire();
+    this.wire = wire ?? new Wire();
     // Must be registered before the handshake: the extended handshake that
     // advertises ut_metadata goes out with it, and magnet starts need it.
-    this.wire.use(utMetadata());
+    // An inbound wire arrives already handshaken (metadata is known by then).
+    if (!wire) this.wire.use(utMetadata());
+  }
+
+  /** Wraps a peer that dialed us (already handshaken by PeerServer) so the piece manager can download from it too — most of a swarm sits behind NAT and can only reach us, never be dialed. */
+  static fromInbound(socket: net.Socket, wire: Wire): PeerConnection {
+    const connection = new PeerConnection(
+      { host: socket.remoteAddress ?? "", port: socket.remotePort ?? 0 },
+      wire
+    );
+    connection.socket = socket;
+    socket.on("error", (err) => connection.forwardError(err));
+    socket.on("close", () => {
+      connection.destroy();
+      connection.emit("close");
+    });
+    wire.on("error", (err) => connection.forwardError(err));
+    connection.startRequestTimeouts();
+    return connection;
+  }
+
+  private startRequestTimeouts(): void {
+    this.wire.setKeepAlive(true);
+    this.wire.setTimeout(REQUEST_TIMEOUT_MS);
+    this.wire.on("timeout", () => this.destroy());
   }
 
   static async connect(
@@ -78,9 +102,7 @@ export class PeerConnection extends EventEmitter {
           reject(err);
         } else {
           socket.setTimeout(0);
-          this.wire.setKeepAlive(true);
-          this.wire.setTimeout(REQUEST_TIMEOUT_MS);
-          this.wire.on("timeout", () => this.destroy());
+          this.startRequestTimeouts();
           resolve();
         }
       };
@@ -295,6 +317,17 @@ export class PeerConnectionPool extends EventEmitter {
       this.pending.delete(key);
       this.pump();
     }
+  }
+
+  /** Takes an inbound connection into the pool, so it's offered to the piece manager like a dialed one. */
+  adopt(connection: PeerConnection): void {
+    if (this.destroyed) return;
+    const key = `${connection.address.host}:${connection.address.port}`;
+    if (this.active.has(key)) return;
+    this.active.set(key, connection);
+    connection.once("close", () => this.retire(key, connection.address));
+    connection.once("error", () => this.retire(key, connection.address));
+    this.emit("wire", connection);
   }
 
   private retire(key: string, peer: PeerAddress): void {

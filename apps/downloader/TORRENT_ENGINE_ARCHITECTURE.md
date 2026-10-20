@@ -128,7 +128,12 @@ registered against it.
 Any `SeedSource` (an object with `hasPiece(index)` / `readPieceRange(index, offset,
 length)`) can be registered — `PieceManager` implements the interface directly, so a
 download registers as seedable the moment it starts, not just once it finishes; peers can
-pull already-verified pieces from us mid-download. `engine.ts`'s `resumeSeeding` builds a
+pull already-verified pieces from us mid-download. While a download is in progress it also
+registers an inbound-peer callback: the server wraps each inbound connection as a
+`PeerConnection` (`fromInbound`) and hands it to that torrent's pool (`adopt`), so we
+download from peers that dialed us too — most of a swarm is behind NAT and can't be dialed.
+Once the download finishes the pool (and those adopted connections) is torn down, and
+later inbound connections are seed-only. `engine.ts`'s `resumeSeeding` builds a
 lighter `StaticSeedSource` (backed directly by `PieceStore`, no live peer connections at
 all) for `seed-reconciliation.ts` to re-attach every still-retained, fully-downloaded
 resolution on worker boot — mirrors the WebTorrent-era reconciliation's self-healing

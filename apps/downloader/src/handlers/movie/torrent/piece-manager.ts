@@ -10,8 +10,11 @@ import type { TorrentFileMeta, TorrentMetadata } from "./metadata.js";
 
 type PieceState = "needed" | "in-flight" | "done";
 
-const MAX_IN_FLIGHT_PER_PEER = 5;
-const BLOCK_PIPELINE_DEPTH = 4;
+// 20 outstanding blocks per peer, concentrated on few pieces so they finish.
+const MAX_IN_FLIGHT_PER_PEER = 2;
+const BLOCK_PIPELINE_DEPTH = 10;
+/** Bounds partially-downloaded pieces held in memory (~128MB at 2MB pieces). With ~100 peers, an uncapped spread left hundreds of pieces half-done: memory climbed and almost none completed. */
+const MAX_PIECES_IN_FLIGHT = 64;
 
 export type TargetFile = {
   file: TorrentFileMeta;
@@ -53,6 +56,7 @@ export class PieceManager extends EventEmitter implements SeedSource {
 
   private readonly fileHandles = new Map<TargetFile, FileHandle>();
   private verifiedCount = 0;
+  private inFlightPieceCount = 0;
   private destroyed = false;
   private doneEmitted = false;
 
@@ -144,12 +148,15 @@ export class PieceManager extends EventEmitter implements SeedSource {
   private scheduleMore(): void {
     if (this.destroyed) return;
     for (const index of this.neededPieceIndices) {
+      if (this.inFlightPieceCount >= MAX_PIECES_IN_FLIGHT) break;
       if (this.pieceState.get(index) !== "needed") continue;
       const peer = this.pickPeerFor(index);
       if (!peer) continue;
       this.pieceState.set(index, "in-flight");
+      this.inFlightPieceCount++;
       this.inFlightPerPeer.set(peer, (this.inFlightPerPeer.get(peer) ?? 0) + 1);
       this.downloadPiece(peer, index).finally(() => {
+        this.inFlightPieceCount--;
         this.inFlightPerPeer.set(peer, Math.max(0, (this.inFlightPerPeer.get(peer) ?? 1) - 1));
         this.scheduleMore();
       });
