@@ -116,6 +116,23 @@ export class S3StorageService implements IStorageService {
     bucketName,
     prefix
   ) => {
+    const names = await this.listObjectNamesByPrefix(bucketName, prefix);
+    if (names.length === 0) return;
+    for (let i = 0; i < names.length; i += REMOVE_BATCH) {
+      const chunk = names.slice(i, i + REMOVE_BATCH);
+      await this.s3Client.send(
+        new DeleteObjectsCommand({
+          Bucket: bucketName,
+          Delete: { Objects: chunk.map((Key) => ({ Key })) },
+        })
+      );
+    }
+  };
+
+  listObjectNamesByPrefix: IStorageService["listObjectNamesByPrefix"] = async (
+    bucketName,
+    prefix
+  ) => {
     const normalized = prefix.endsWith("/") ? prefix : `${prefix}/`;
     const names: string[] = [];
     let continuationToken: string | undefined;
@@ -132,17 +149,7 @@ export class S3StorageService implements IStorageService {
       }
       continuationToken = res.NextContinuationToken;
     } while (continuationToken);
-
-    if (names.length === 0) return;
-    for (let i = 0; i < names.length; i += REMOVE_BATCH) {
-      const chunk = names.slice(i, i + REMOVE_BATCH);
-      await this.s3Client.send(
-        new DeleteObjectsCommand({
-          Bucket: bucketName,
-          Delete: { Objects: chunk.map((Key) => ({ Key })) },
-        })
-      );
-    }
+    return names;
   };
 
   presignedGetObject: IStorageService["presignedGetObject"] = async (

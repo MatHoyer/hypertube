@@ -15,21 +15,6 @@ services:
       timeout: 5s
       retries: 5
 
-  transmission:
-    container_name: transmission
-    image: linuxserver/transmission:4.1.0
-    env_file: .env
-    environment:
-      - PUID=0
-      - PGID=0
-      - TZ=Europe/Paris
-      - TRANSMISSION_RPC_ENABLED=true
-      - TRANSMISSION_RPC_AUTHENTICATION_REQUIRED=false
-    volumes:
-      - ./apps/downloader/config/settings.json:/config/settings.json:ro
-      - downloads_transmission:/downloads-transmission
-    network_mode: container:vpn
-
   redis:
     container_name: hypertube_redis
     image: redis:7-alpine
@@ -69,8 +54,6 @@ services:
 volumes:
   hypertube_data:
   s3_data:
-  downloads_transmission:
-    name: hypertube_downloads_transmission
 
 networks:
   hypertube-network:

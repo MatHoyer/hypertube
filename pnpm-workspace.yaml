@@ -1,3 +1,10 @@
 packages:
   - apps/*
   - packages/*
+
+# bittorrent-tracker imports @thaunknown/simple-peer (WebSocket/WebRTC
+# trackers) → webrtc-polyfill → node-datachannel, a native addon that crashes
+# the downloader on import if its install script (prebuilt binary fetch) is
+# blocked — pnpm blocks dependency install scripts by default.
+onlyBuiltDependencies:
+  - node-datachannel
