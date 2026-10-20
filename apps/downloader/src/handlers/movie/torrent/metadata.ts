@@ -1,7 +1,7 @@
 import { formatUnknownError } from "@hypertube/libs";
 import parseTorrent from "parse-torrent";
 import type Wire from "bittorrent-protocol";
-import utMetadata, { UtMetadata } from "ut_metadata";
+import type { UtMetadata } from "ut_metadata";
 
 export type TorrentFileMeta = {
   path: string;
@@ -75,6 +75,8 @@ const METADATA_FETCH_TIMEOUT_MS = 60000;
 /**
  * Fetches the info dict from a single already-connected peer via BEP 9
  * (ut_metadata), for magnet-only starts that have no piece/file info yet.
+ * The wire must have had ut_metadata registered before its handshake (see
+ * PeerConnection) — the extended handshake advertising it is sent then.
  * Caller (peer-connection.ts, Phase 3) owns the wire's lifecycle — this
  * only attaches the extension and waits for either 'metadata' or a fatal
  * outcome (peer doesn't support/have it, wire closes, or timeout).
@@ -85,7 +87,6 @@ export const fetchMetadataFromPeer = (
   timeoutMs = METADATA_FETCH_TIMEOUT_MS
 ): Promise<TorrentMetadata> => {
   return new Promise((resolve, reject) => {
-    wire.use(utMetadata());
     // wire.use() assigns the extension instance under this well-known key
     // (bittorrent-protocol's `use()` reads it off `Extension.prototype.name`)
     // — no public type for it, hence the one cast here.

@@ -95,6 +95,8 @@ export class PieceManager extends EventEmitter implements SeedSource {
     }
 
     this.pool.on("wire", (connection) => this.handleNewPeer(connection));
+    // Peers connected while a magnet's metadata was being fetched.
+    for (const connection of this.pool.connections) this.handleNewPeer(connection);
     this.scheduleMore();
   }
 

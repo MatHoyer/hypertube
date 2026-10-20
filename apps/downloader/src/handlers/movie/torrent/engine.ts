@@ -1,6 +1,5 @@
 import { hypertubeLogger } from "@hypertube/libs";
 import type { IStorageService } from "@hypertube/server-core";
-import type Wire from "bittorrent-protocol";
 import { resolveListenPort } from "./listen-port.js";
 import {
   fetchMetadataFromPeer,
@@ -9,7 +8,7 @@ import {
   type TorrentMetadata,
 } from "./metadata.js";
 import { getPeerId } from "./peer-id.js";
-import { PeerConnectionPool } from "./peer-connection.js";
+import { PeerConnection, PeerConnectionPool } from "./peer-connection.js";
 import { PeerDiscovery } from "./peer-discovery.js";
 import type { SeedSource } from "./peer-server.js";
 import { PeerServer } from "./peer-server.js";
@@ -49,6 +48,31 @@ const infoHashOf = (
 ): string =>
   identifier.kind === "full" ? identifier.metadata.infoHash : identifier.infoHash;
 
+const MAGNET_METADATA_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** Asks every peer that connects until one delivers the info dict — many peers don't support or answer ut_metadata. */
+const fetchMetadataFromSwarm = (
+  pool: PeerConnectionPool,
+  infoHash: string
+): Promise<TorrentMetadata> =>
+  new Promise((resolve, reject) => {
+    const onWire = (connection: PeerConnection) => {
+      fetchMetadataFromPeer(connection.wire, infoHash).then(
+        (metadata) => {
+          clearTimeout(timeout);
+          pool.off("wire", onWire);
+          resolve(metadata);
+        },
+        () => {} // this peer can't serve it; keep waiting for others
+      );
+    };
+    const timeout = setTimeout(() => {
+      pool.off("wire", onWire);
+      reject(new Error(`Timed out fetching metadata for ${infoHash} from the swarm`));
+    }, MAGNET_METADATA_TIMEOUT_MS);
+    pool.on("wire", onWire);
+  });
+
 export type AddedTorrent = {
   infoHash: string;
   metadata: TorrentMetadata;
@@ -67,8 +91,13 @@ export const addTorrent = async (
   const identifier = await parseTorrentIdentifier(torrentIdOrMagnet);
   const infoHash = infoHashOf(identifier);
 
+  // A handle whose download already finished is stale: a second resolution
+  // row can share this infoHash, and its job needs its own scratch files —
+  // replace it (the new PieceManager resumes every piece from the store).
   const existing = handles.get(infoHash);
-  if (existing) return { infoHash, metadata: existing.metadata };
+  if (existing && !existing.stoppedDownloading) {
+    return { infoHash, metadata: existing.metadata };
+  }
 
   const peerId = getPeerId();
   const port = await resolveListenPort();
@@ -83,10 +112,7 @@ export const addTorrent = async (
     if (identifier.kind === "full") {
       metadata = identifier.metadata;
     } else {
-      const wire = await new Promise<Wire>((resolve) =>
-        pool.once("wire", (connection) => resolve(connection.wire))
-      );
-      metadata = await fetchMetadataFromPeer(wire, infoHash);
+      metadata = await fetchMetadataFromSwarm(pool, infoHash);
     }
   } catch (error) {
     discovery.destroy();

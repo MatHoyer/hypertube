@@ -67,6 +67,11 @@ declare module "bittorrent-dht" {
       infoHash: string | Uint8Array,
       callback?: (err: Error | null, numFound: number) => void
     ): { abort: () => void };
+    announce(
+      infoHash: string | Uint8Array,
+      port: number,
+      callback?: (err: Error | null) => void
+    ): void;
     address(): DHTAddress;
     destroy(cb?: () => void): void;
 

@@ -81,6 +81,7 @@ export class PeerDiscovery extends EventEmitter {
     }
   };
   private readonly maxPeers: number;
+  private readonly port: number;
   private destroyed = false;
 
   constructor({
@@ -94,6 +95,7 @@ export class PeerDiscovery extends EventEmitter {
     super();
     this.infoHash = infoHash;
     this.maxPeers = maxPeers;
+    this.port = port;
     this.useDht = useDht;
 
     this.tracker =
@@ -121,13 +123,7 @@ export class PeerDiscovery extends EventEmitter {
           if (this.destroyed) return;
           this.dht = dht;
           dht.on("peer", this.onDhtPeer);
-          dht.lookup(infoHash, (err) => {
-            if (err) {
-              hypertubeLogger.warn(
-                `DHT lookup failed for ${infoHash}: ${formatUnknownError(err)}`
-              );
-            }
-          });
+          this.lookupAndAnnounce();
         })
         .catch((err: unknown) => {
           hypertubeLogger.error(
@@ -149,11 +145,31 @@ export class PeerDiscovery extends EventEmitter {
     this.emit("peer", peer);
   }
 
+  /** Lookup finds peers; announce afterwards (reusing the lookup's routing table) lets DHT peers find and dial us. */
+  private lookupAndAnnounce(): void {
+    const dht = this.dht;
+    if (!dht) return;
+    dht.lookup(this.infoHash, (err) => {
+      if (err) {
+        hypertubeLogger.warn(
+          `DHT lookup failed for ${this.infoHash}: ${formatUnknownError(err)}`
+        );
+        return;
+      }
+      if (!this.destroyed) dht.announce(this.infoHash, this.port);
+    });
+  }
+
   /** Re-announces to trackers and re-runs a DHT lookup — use when the connection pool is starved for candidates (e.g. every existing peer disconnected). */
-  refresh(infoHash: string): void {
+  refresh(): void {
     if (this.destroyed) return;
+    // Forget already-seen addresses so peers that dropped or failed to dial
+    // earlier get re-emitted — the pool dedupes against live connections
+    // itself. Without this a long download drains its peers and stalls once
+    // the first maxPeers addresses are used up.
+    this.seen.clear();
     this.tracker?.update();
-    this.dht?.lookup(infoHash);
+    this.lookupAndAnnounce();
   }
 
   /** Tears down this torrent's own tracker client and DHT listener/lookup — never destroys the shared DHT node itself, since other torrents may still be using it. */

@@ -2,10 +2,13 @@ import { formatUnknownError, hypertubeLogger } from "@hypertube/libs";
 import { EventEmitter } from "node:events";
 import * as net from "node:net";
 import Wire from "bittorrent-protocol";
+import utMetadata from "ut_metadata";
 import type { PeerAddress, PeerDiscovery } from "./peer-discovery.js";
 
 const CONNECT_TIMEOUT_MS = 10000;
 const HANDSHAKE_TIMEOUT_MS = 10000;
+/** A connected, unchoking peer that stops answering block requests would otherwise hold its in-flight pieces forever. */
+const REQUEST_TIMEOUT_MS = 30000;
 /** Per BitTorrent wire protocol convention (BEP 3): 16KB, the block size virtually every client uses/expects for piece requests. */
 export const BLOCK_LENGTH = 16 * 1024;
 
@@ -27,6 +30,9 @@ export class PeerConnection extends EventEmitter {
     super();
     this.address = address;
     this.wire = new Wire();
+    // Must be registered before the handshake: the extended handshake that
+    // advertises ut_metadata goes out with it, and magnet starts need it.
+    this.wire.use(utMetadata());
   }
 
   static async connect(
@@ -72,6 +78,9 @@ export class PeerConnection extends EventEmitter {
           reject(err);
         } else {
           socket.setTimeout(0);
+          this.wire.setKeepAlive(true);
+          this.wire.setTimeout(REQUEST_TIMEOUT_MS);
+          this.wire.on("timeout", () => this.destroy());
           resolve();
         }
       };
@@ -121,6 +130,9 @@ export class PeerConnection extends EventEmitter {
       // Only relevant post-handshake — pre-handshake failures settle() the
       // connect() promise instead via the listeners above.
       socket.on("close", () => {
+        // An abrupt close doesn't end the piped wire, which would leave its
+        // pending block requests unanswered — destroy() fails them.
+        this.destroy();
         if (settled) this.emit("close");
       });
       this.wire.on("error", (err) => {
@@ -180,6 +192,7 @@ export type PeerConnectionPoolOptions = {
 
 const DEFAULT_CONCURRENCY = 30;
 const REFRESH_MIN_INTERVAL_MS = 15000;
+const PUMP_INTERVAL_MS = 30000;
 
 /**
  * Dials candidates handed out by a PeerDiscovery pool, bounded to
@@ -199,6 +212,8 @@ export class PeerConnectionPool extends EventEmitter {
   private readonly active = new Map<string, PeerConnection>();
   private lastRefreshAt = 0;
   private destroyed = false;
+  /** pump() otherwise only runs on dial/close events — a pool whose few peers stay connected would never ask discovery for more. */
+  private readonly pumpTimer = setInterval(() => this.pump(), PUMP_INTERVAL_MS);
 
   constructor({
     infoHash,
@@ -224,6 +239,11 @@ export class PeerConnectionPool extends EventEmitter {
     return this.pending.size + this.active.size;
   }
 
+  /** Connections already handshaken — for consumers that start listening for 'wire' after some peers connected. */
+  get connections(): PeerConnection[] {
+    return [...this.active.values()];
+  }
+
   /** Currently connected (post-handshake) peer count — for progress/stall reporting. */
   get connectionCount(): number {
     return this.active.size;
@@ -247,7 +267,7 @@ export class PeerConnectionPool extends EventEmitter {
       const now = Date.now();
       if (now - this.lastRefreshAt > REFRESH_MIN_INTERVAL_MS) {
         this.lastRefreshAt = now;
-        this.discovery.refresh(this.infoHash);
+        this.discovery.refresh();
       }
     }
   }
@@ -286,6 +306,7 @@ export class PeerConnectionPool extends EventEmitter {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    clearInterval(this.pumpTimer);
     this.queue.length = 0;
     this.pending.clear();
     for (const connection of this.active.values()) {
