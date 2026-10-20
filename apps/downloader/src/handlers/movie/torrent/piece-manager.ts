@@ -48,6 +48,8 @@ export class PieceManager extends EventEmitter implements SeedSource {
   /** Peers whose last attempt at a given piece failed a hash check — deprioritized (not banned) for that piece so a retry prefers a different source. */
   private readonly failedPeersByPiece = new Map<number, Set<PeerConnection>>();
   private readonly peers = new Set<PeerConnection>();
+  /** Blocks already received for pieces not yet complete — kept across attempts so a peer choking us mid-piece doesn't throw away what it already sent (a 2MB piece is 128 blocks; short unchoke windows otherwise never finish one). */
+  private readonly partialBlocks = new Map<number, Buffer[]>();
 
   private readonly fileHandles = new Map<TargetFile, FileHandle>();
   private verifiedCount = 0;
@@ -157,23 +159,35 @@ export class PieceManager extends EventEmitter implements SeedSource {
   private async downloadPiece(peer: PeerConnection, index: number): Promise<void> {
     const pieceLength = pieceByteLength(this.metadata, index);
     const blockCount = Math.ceil(pieceLength / BLOCK_LENGTH);
-    const blocks: Buffer[] = new Array(blockCount);
+    let blocks = this.partialBlocks.get(index);
+    if (!blocks) {
+      blocks = new Array<Buffer>(blockCount);
+      this.partialBlocks.set(index, blocks);
+    }
+    const pieceBlocks = blocks;
+    const missingBlocks = Array.from({ length: blockCount }, (_, i) => i).filter(
+      (i) => !pieceBlocks[i]
+    );
 
     try {
       let cursor = 0;
       const worker = async () => {
-        while (cursor < blockCount) {
-          const blockIndex = cursor++;
+        while (cursor < missingBlocks.length) {
+          const blockIndex = missingBlocks[cursor++];
           const offset = blockIndex * BLOCK_LENGTH;
           const length = Math.min(BLOCK_LENGTH, pieceLength - offset);
-          blocks[blockIndex] = await peer.requestBlock(index, offset, length);
+          pieceBlocks[blockIndex] = await peer.requestBlock(index, offset, length);
         }
       };
       await Promise.all(
-        Array.from({ length: Math.min(BLOCK_PIPELINE_DEPTH, blockCount) }, worker)
+        Array.from(
+          { length: Math.min(BLOCK_PIPELINE_DEPTH, missingBlocks.length) },
+          worker
+        )
       );
 
-      const pieceBuffer = Buffer.concat(blocks, pieceLength);
+      this.partialBlocks.delete(index);
+      const pieceBuffer = Buffer.concat(pieceBlocks, pieceLength);
       const hash = createHash("sha1").update(pieceBuffer).digest("hex");
       if (hash !== this.metadata.pieces[index]) {
         hypertubeLogger.warn(
