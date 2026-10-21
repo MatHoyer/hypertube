@@ -13,7 +13,10 @@ import { Job } from "bullmq";
 import { notifySubscribers } from "../../notifications/notifySubscriber.js";
 import { downloadMovie } from "./movie-downloader.js";
 
-export const downloadMovieHandler = async (job: Job<TDownloadJobData>) => {
+export const downloadMovieHandler = async (
+  job: Job<TDownloadJobData>,
+  token?: string
+) => {
   hypertubeLogger.info(`[${job.data.movie.id}] Download torrent job started`);
 
   await prisma.resolution.update({
@@ -21,7 +24,7 @@ export const downloadMovieHandler = async (job: Job<TDownloadJobData>) => {
     data: { downloadState: DownloadStates.DOWNLOADING },
   });
 
-  return downloadMovie(job);
+  return downloadMovie(job, token);
 };
 
 export const downloadMovieSuccessHandler = async (
@@ -56,11 +59,23 @@ export const downloadMovieFailureHandler = async (
   err: Error
 ) => {
   hypertubeLogger.error(
-    `[${job?.data.movie.id}] Movie download failed: ${formatUnknownError(err)}`
+    `[${job?.data.movie.id}] Movie download failed (attempt ${job?.attemptsMade}/${job?.opts.attempts ?? 1}): ${formatUnknownError(err)}`
   );
   if (!job?.data.movie.id || !job?.data.resolutionId) {
     hypertubeLogger.error(
       `[${job?.data.movie.id}] Can't update movie resolution download state : No movieId or resolutionId`
+    );
+    return;
+  }
+
+  // BullMQ retries (see downloadTorrent.ts's producer opts) resume from the
+  // S3 piece store rather than restarting, so an intermediate attempt
+  // failing isn't a real "not downloaded" state — only flip the DB/notify
+  // subscribers once every attempt has actually been exhausted.
+  const attemptsLimit = job.opts.attempts ?? 1;
+  if (job.attemptsMade < attemptsLimit) {
+    hypertubeLogger.info(
+      `[${job.data.movie.id}] Attempt ${job.attemptsMade}/${attemptsLimit} failed, BullMQ will retry`
     );
     return;
   }

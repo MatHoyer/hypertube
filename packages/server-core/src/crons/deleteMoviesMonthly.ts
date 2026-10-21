@@ -1,6 +1,8 @@
 import { formatUnknownError, newUTCDate, TLogger } from "@hypertube/libs";
 import { subMonths } from "date-fns";
 import { prisma } from "../prisma.js";
+import { getMovieQueue } from "../queues/downloader.js";
+import { MOVIE_QUEUE_JOB_NAMES } from "../redis/const.js";
 import { BUCKETS } from "../services/StorageService/const.js";
 import { IStorageService } from "../services/StorageService/IStorageService.js";
 import { cronUTC } from "./cronUTC.js";
@@ -18,6 +20,7 @@ const deleteMoviesMonthlyCallback =
           lt: subMonths(newUTCDate(), 1),
         },
       },
+      include: { resolutions: true },
     });
 
     if (moviesToDelete.length === 0) {
@@ -36,6 +39,33 @@ const deleteMoviesMonthlyCallback =
         localLogger.error(
           `Error deleting movie folder: ${formatUnknownError(error)}`
         );
+      }
+
+      // Stop seeding and purge raw torrent piece data. Deletes the S3 prefix
+      // first so no live downloader can re-verify pieces we're about to remove.
+      for (const resolution of movie.resolutions) {
+        if (!resolution.infoHash) continue;
+
+        try {
+          await storageService.removeObjectsByPrefix(
+            BUCKETS.TORRENT_PIECES,
+            resolution.infoHash
+          );
+        } catch (error) {
+          localLogger.error(
+            `Error deleting torrent piece store for ${resolution.infoHash}: ${formatUnknownError(error)}`
+          );
+        }
+
+        try {
+          await getMovieQueue().produce(MOVIE_QUEUE_JOB_NAMES.STOP_SEEDING, {
+            infoHash: resolution.infoHash,
+          });
+        } catch (error) {
+          localLogger.error(
+            `Error enqueueing stop-seeding job for ${resolution.infoHash}: ${formatUnknownError(error)}`
+          );
+        }
       }
     }
 

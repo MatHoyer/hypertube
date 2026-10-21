@@ -22,6 +22,10 @@ export interface IStorageService {
   ) => Promise<void>;
   removeObject: (bucketName: TBuckets, objectName: string) => Promise<void>;
   removeObjectsByPrefix: (bucketName: TBuckets, prefix: string) => void;
+  listObjectNamesByPrefix: (
+    bucketName: TBuckets,
+    prefix: string
+  ) => Promise<string[]>;
   presignedGetObject: (
     bucketName: TBuckets,
     objectName: string,

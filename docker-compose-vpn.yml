@@ -8,9 +8,8 @@ services:
       - /dev/net/tun
     env_file: .env
     ports:
-      - ${TRANSMISSION_RCP_PORT}
-      - ${TRANSMISSION_TORRENT_PORT}
-      - ${TRANSMISSION_TORRENT_PORT}/udp
+      - ${TORRENT_PORT}
+      - ${TORRENT_PORT}/udp
       - ${PROWLARR_PORT}
       - ${SUBTITLE_PROXY_PORT}
     environment:
@@ -19,11 +18,32 @@ services:
       - OPENVPN_USER=${OPENVPN_USER}
       - OPENVPN_PASSWORD=${OPENVPN_PASSWORD}
       - SERVER_COUNTRIES=${VPN_COUNTRY:-Switzerland}
+      # ProtonVPN only assigns a forwarded port (VPN_PORT_FORWARDING below)
+      # on P2P-tagged servers — required for the port forwarding to do
+      # anything, restricts server selection to that pool.
+      - PORT_FORWARD_ONLY=on
+      # The old Transmission setup had port-forwarding-enabled: true — a
+      # plain outbound-only client (the default here) can only ever reach
+      # peers who themselves accept inbound, which is a small, unreliable
+      # slice of any swarm. Forwarding a real port lets the rest of the
+      # swarm connect to *us*. gluetun negotiates it via ProtonVPN's NAT-PMP
+      # and writes it to VPN_PORT_FORWARDING_STATUS_FILE (default
+      # /tmp/gluetun/forwarded_port, see the gluetun_data volume below) —
+      # the downloader reads that file at startup and listens on whatever
+      # port comes back (apps/downloader/src/handlers/movie/torrent/listen-port.ts).
+      # gluetun also opens its own firewall for that port automatically.
+      - VPN_PORT_FORWARDING=on
       - OPENVPN_MSSFIX=1280
       - OPENVPN_MTU=1300
+    volumes:
+      - gluetun_data:/tmp/gluetun
     networks:
       - hypertube-network
 
 networks:
   hypertube-network:
     external: true
+
+volumes:
+  gluetun_data:
+    name: hypertube_gluetun_data

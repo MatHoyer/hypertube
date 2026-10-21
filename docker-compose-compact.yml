@@ -46,12 +46,13 @@ services:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
       - REDIS_HOST=redis
       - NODE_ENV=PROD
-      - TRANSMISSION_HOST=vpn
       - S3_ENDPOINT=s3
+    # In-process torrent engine: same VPN namespace + forwarded-port file as
+    # docker-compose-prod.yml's downloader.
+    network_mode: container:vpn
     volumes:
-      - downloads_transmission:/downloads-transmission
-    networks:
-      - hypertube-network
+      - gluetun_data:/tmp/gluetun:ro
+    restart: unless-stopped
     depends_on:
       - app
 
@@ -122,7 +123,7 @@ networks:
     external: true
 
 volumes:
-  downloads_transmission:
-    name: hypertube_downloads_transmission
   prowlarr_config:
     name: hypertube_prowlarr_config
+  gluetun_data:
+    name: hypertube_gluetun_data
