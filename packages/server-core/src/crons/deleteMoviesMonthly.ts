@@ -1,4 +1,9 @@
-import { formatUnknownError, newUTCDate, TLogger } from "@hypertube/libs";
+import {
+  DownloadStates,
+  formatUnknownError,
+  newUTCDate,
+  TLogger,
+} from "@hypertube/libs";
 import { subMonths } from "date-fns";
 import { prisma } from "../prisma.js";
 import { getMovieQueue } from "../queues/downloader.js";
@@ -10,6 +15,18 @@ import { cronUTC } from "./cronUTC.js";
 const DELETE_MOVIES_MONTHLY_CRON_EXPRESSION = "0 0 0 * * *";
 const DELETE_MOVIES_MONTHLY_CRON_NAME = "Delete movies monthly";
 
+// Never delete a movie mid-download: it would wipe the pieces under the live
+// job and the row its completion handler is about to update.
+const NO_ACTIVE_DOWNLOAD = {
+  resolutions: {
+    none: {
+      downloadState: {
+        in: [DownloadStates.WAITING, DownloadStates.DOWNLOADING],
+      },
+    },
+  },
+};
+
 const deleteMoviesMonthlyCallback =
   (storageService: IStorageService) => async (localLogger: TLogger) => {
     localLogger.info("Deleting movies older than 1 month");
@@ -19,6 +36,7 @@ const deleteMoviesMonthlyCallback =
         usedAt: {
           lt: subMonths(newUTCDate(), 1),
         },
+        ...NO_ACTIVE_DOWNLOAD,
       },
       include: { resolutions: true },
     });
@@ -57,10 +75,15 @@ const deleteMoviesMonthlyCallback =
           );
         }
 
+        // Only finished downloads seed; a failed one may still have left
+        // pieces in the store (purged above), but nothing to stop.
+        if (resolution.downloadState !== DownloadStates.DOWNLOADED) continue;
         try {
-          await getMovieQueue().produce(MOVIE_QUEUE_JOB_NAMES.STOP_SEEDING, {
-            infoHash: resolution.infoHash,
-          });
+          await getMovieQueue().produce(
+            MOVIE_QUEUE_JOB_NAMES.STOP_SEEDING,
+            { infoHash: resolution.infoHash },
+            { removeOnComplete: true, removeOnFail: true }
+          );
         } catch (error) {
           localLogger.error(
             `Error enqueueing stop-seeding job for ${resolution.infoHash}: ${formatUnknownError(error)}`
@@ -74,6 +97,8 @@ const deleteMoviesMonthlyCallback =
         id: {
           in: moviesToDelete.map((movie) => movie.id),
         },
+        // A download may have been requested while we were purging.
+        ...NO_ACTIVE_DOWNLOAD,
       },
     });
 

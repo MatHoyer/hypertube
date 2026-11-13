@@ -32,7 +32,9 @@ export const downloadMovieSuccessHandler = async (
 ) => {
   hypertubeLogger.info(`[${job.data.movie.id}] Moviedownload success`);
 
-  await prisma.resolution.update({
+  // updateMany: the row may have been deleted mid-download (movie cleanup
+  // cron); update() would throw P2025 out of an async event listener.
+  const { count } = await prisma.resolution.updateMany({
     where: {
       id: job.data.resolutionId,
     },
@@ -40,6 +42,12 @@ export const downloadMovieSuccessHandler = async (
       downloadState: DownloadStates.DOWNLOADED,
     },
   });
+  if (count === 0) {
+    hypertubeLogger.warn(
+      `[${job.data.movie.id}] Resolution ${job.data.resolutionId} no longer exists, skipping post-download steps`
+    );
+    return;
+  }
   try {
     await notifySubscribers(job.data.movie.id, DownloadStates.DOWNLOADED);
   } catch (error) {
@@ -80,7 +88,7 @@ export const downloadMovieFailureHandler = async (
     return;
   }
 
-  await prisma.resolution.update({
+  await prisma.resolution.updateMany({
     where: {
       id: job.data.resolutionId,
     },
