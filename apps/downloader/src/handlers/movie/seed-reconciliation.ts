@@ -41,56 +41,59 @@ export const reconcileSeeds = async (): Promise<void> => {
     `Seed reconciliation: resuming ${resolutions.length} torrent(s)`
   );
 
-  await Promise.allSettled(
-    resolutions.map(async (resolution) => {
-      if (!resolution.infoHash) return;
-      try {
-        const torrentStream = await storageService.getObject(
-          BUCKETS.MOVIES,
-          getStoragePath(
-            resolution.Movie.tmdbId.toString(),
-            "resolutions",
-            resolution.id,
-            "resolution.torrent"
-          )
-        );
-        const torrentBuf = await buffer(torrentStream);
-        const isMagnet = torrentBuf.toString("utf-8").startsWith("magnet:");
-        const torrentId: string | Buffer = isMagnet
-          ? torrentBuf.toString("utf-8")
-          : torrentBuf;
+  const resumeOne = async (resolution: (typeof resolutions)[number]) => {
+    if (!resolution.infoHash) return;
+    try {
+      const torrentStream = await storageService.getObject(
+        BUCKETS.MOVIES,
+        getStoragePath(
+          resolution.Movie.tmdbId.toString(),
+          "resolutions",
+          resolution.id,
+          "resolution.torrent"
+        )
+      );
+      const torrentBuf = await buffer(torrentStream);
+      const isMagnet = torrentBuf.toString("utf-8").startsWith("magnet:");
+      const torrentId: string | Buffer = isMagnet
+        ? torrentBuf.toString("utf-8")
+        : torrentBuf;
 
-        // Deliberately not engine.addTorrent — that would spin up live peer
-        // discovery/dialing (and register a handle that'd make
-        // resumeSeeding's no-op guard bail immediately). Reconciliation
-        // only needs metadata.files, resolved locally with no network
-        // access for a real .torrent buffer; a magnet with no cached
-        // metadata is handled inside resumeSeeding itself.
-        const identifier = await parseTorrentIdentifier(torrentId);
-        if (identifier.kind !== "full") {
-          hypertubeLogger.warn(
-            `Seed reconciliation: magnet with no cached metadata for resolution ${resolution.id}, skipping (would need a live peer round-trip just to re-seed)`
-          );
-          return;
-        }
-        const selected = selectTargetFiles(identifier.metadata.files);
-        if (!selected) {
-          hypertubeLogger.warn(
-            `Seed reconciliation: no video file found for resolution ${resolution.id}, skipping`
-          );
-          return;
-        }
-
-        await engine.resumeSeeding(
-          torrentId,
-          [selected.videoFile, ...selected.sidecarSubtitleFiles],
-          storageService
+      // Deliberately not engine.addTorrent — that would spin up live peer
+      // discovery/dialing (and register a handle that'd make
+      // resumeSeeding's no-op guard bail immediately). Reconciliation
+      // only needs metadata.files, resolved locally with no network
+      // access for a real .torrent buffer; a magnet with no cached
+      // metadata is handled inside resumeSeeding itself.
+      const identifier = await parseTorrentIdentifier(torrentId);
+      if (identifier.kind !== "full") {
+        hypertubeLogger.warn(
+          `Seed reconciliation: magnet with no cached metadata for resolution ${resolution.id}, skipping (would need a live peer round-trip just to re-seed)`
         );
-      } catch (error) {
-        hypertubeLogger.error(
-          `Seed reconciliation failed for resolution ${resolution.id}: ${formatUnknownError(error)}`
-        );
+        return;
       }
-    })
-  );
+      const selected = selectTargetFiles(identifier.metadata.files);
+      if (!selected) {
+        hypertubeLogger.warn(
+          `Seed reconciliation: no video file found for resolution ${resolution.id}, skipping`
+        );
+        return;
+      }
+
+      await engine.resumeSeeding(
+        torrentId,
+        [selected.videoFile, ...selected.sidecarSubtitleFiles],
+        storageService
+      );
+    } catch (error) {
+      hypertubeLogger.error(
+        `Seed reconciliation failed for resolution ${resolution.id}: ${formatUnknownError(error)}`
+      );
+    }
+  };
+
+  // One torrent at a time: each resumeSeeding already self-verifies with its
+  // own pool of concurrent full-piece reads, so running them all at once
+  // multiplied boot memory by the number of retained movies.
+  for (const resolution of resolutions) await resumeOne(resolution);
 };
