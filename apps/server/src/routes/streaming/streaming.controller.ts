@@ -1,10 +1,11 @@
 import {
+  newUTCDate,
   PRESIGNED_URL_EXPIRY_SECONDS,
   TGetStreamingPreviewSchemas,
   TGetStreamingResolutionSchemas,
   TGetStreamingSubtitlesSchemas,
 } from "@hypertube/libs";
-import { BUCKETS, getStoragePath } from "@hypertube/server-core";
+import { BUCKETS, getStoragePath, prisma } from "@hypertube/server-core";
 import { Context } from "hono";
 import { container } from "../../container";
 import { TApiContext } from "../../middlewares/injectApiContext";
@@ -29,6 +30,13 @@ export const getStreamingResolution = async (
   } catch {
     return c.notFound();
   }
+
+  // The monthly cleanup cron deletes movies by usedAt; without this it is
+  // never bumped and movies people still watch get deleted.
+  await prisma.movie.updateMany({
+    where: { tmdbId },
+    data: { usedAt: newUTCDate() },
+  });
 
   const url = await container.storageService.presignedGetObject(
     BUCKETS.MOVIES,
