@@ -7,7 +7,7 @@ network:
 # Sidecars use network_mode: container:vpn — they must be recreated when the VPN
 # container is replaced, or DNS/networking breaks inside Prowlarr/downloader/subtitle-proxy.
 refresh-vpn-sidecars:
-	docker compose -f docker-compose-prod.yml up -d --force-recreate downloader prowlarr subtitle-proxy
+	docker compose -f docker-compose-prod.yml up -d --force-recreate --no-deps downloader prowlarr subtitle-proxy
 
 # VPN
 vpn: network
