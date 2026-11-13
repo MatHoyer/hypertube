@@ -64,7 +64,9 @@ const getSharedDht = (port: number): Promise<DHT | null> => {
         dht.on("error", (err) => {
           hypertubeLogger.error(`DHT error: ${formatUnknownError(err)}`);
         });
-        resolve(dht);
+        // A lookup before bootstrap finishes has no nodes to ask and nobody to announce to.
+        if (dht.ready) resolve(dht);
+        else dht.once("ready", () => resolve(dht));
       });
     });
   }

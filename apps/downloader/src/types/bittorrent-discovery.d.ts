@@ -60,6 +60,8 @@ declare module "bittorrent-dht" {
   export default class DHT extends EventEmitter {
     constructor(opts?: DHTOpts);
     destroyed: boolean;
+    /** True once the routing table has bootstrapped ('ready' event). */
+    ready: boolean;
     listen(onlistening?: () => void): void;
     listen(port?: number, onlistening?: () => void): void;
     listen(port?: number, address?: string, onlistening?: () => void): void;
