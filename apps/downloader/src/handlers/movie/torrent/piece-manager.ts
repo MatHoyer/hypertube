@@ -159,7 +159,9 @@ export class PieceManager extends EventEmitter implements SeedSource {
       this.inFlightPerPeer.set(peer, (this.inFlightPerPeer.get(peer) ?? 0) + 1);
       this.downloadPiece(peer, index).finally(() => {
         this.inFlightPieceCount--;
-        this.inFlightPerPeer.set(peer, Math.max(0, (this.inFlightPerPeer.get(peer) ?? 1) - 1));
+        // Absent once the peer closed — re-setting it would keep the dead connection alive forever.
+        const peerInFlight = this.inFlightPerPeer.get(peer);
+        if (peerInFlight !== undefined) this.inFlightPerPeer.set(peer, Math.max(0, peerInFlight - 1));
         this.scheduleMore();
       });
     }
