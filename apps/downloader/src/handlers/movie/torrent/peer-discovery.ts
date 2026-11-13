@@ -33,7 +33,7 @@ const parseAddr = (addr: string): PeerAddress | null => {
   return { host, port };
 };
 
-let sharedDhtPromise: Promise<DHT> | null = null;
+let sharedDhtPromise: Promise<DHT | null> | null = null;
 
 /**
  * One DHT node for the whole process, shared by every torrent's
@@ -42,22 +42,33 @@ let sharedDhtPromise: Promise<DHT> | null = null;
  * the roadmap calls for), and wastes a routing table per torrent for no
  * benefit: bittorrent-dht's 'peer' events already carry the infoHash they
  * belong to, so one shared node can fan out lookups for as many torrents
- * as are active at once.
+ * as are active at once. Resolves to null if the UDP bind fails (trackers
+ * then carry the load); the next caller retries the bind.
  */
-const getSharedDht = (port: number): Promise<DHT> => {
+const getSharedDht = (port: number): Promise<DHT | null> => {
   if (!sharedDhtPromise) {
-    sharedDhtPromise = new Promise<DHT>((resolve) => {
+    sharedDhtPromise = new Promise<DHT | null>((resolve) => {
       const dht = new DHT();
-      dht.on("error", (err) => {
-        hypertubeLogger.error(`DHT error: ${formatUnknownError(err)}`);
+      // A bind failure only surfaces as 'error' — listen's callback never fires.
+      const onBindError = (err: Error) => {
+        hypertubeLogger.error(
+          `DHT failed to listen on ${port}, continuing without DHT: ${formatUnknownError(err)}`
+        );
+        dht.destroy();
+        sharedDhtPromise = null;
+        resolve(null);
+      };
+      dht.once("error", onBindError);
+      dht.listen(port, () => {
+        dht.removeListener("error", onBindError);
+        dht.on("error", (err) => {
+          hypertubeLogger.error(`DHT error: ${formatUnknownError(err)}`);
+        });
+        resolve(dht);
       });
-      dht.listen(port, () => resolve(dht));
-    }).catch((error: unknown) => {
-      sharedDhtPromise = null;
-      throw error;
     });
   }
-  return sharedDhtPromise as Promise<DHT>;
+  return sharedDhtPromise;
 };
 
 /**
@@ -127,18 +138,12 @@ export class PeerDiscovery extends EventEmitter {
       ? setInterval(() => this.lookupAndAnnounce(), DHT_ANNOUNCE_INTERVAL_MS)
       : null;
     if (useDht) {
-      getSharedDht(port)
-        .then((dht) => {
-          if (this.destroyed) return;
-          this.dht = dht;
-          dht.on("peer", this.onDhtPeer);
-          this.lookupAndAnnounce();
-        })
-        .catch((err: unknown) => {
-          hypertubeLogger.error(
-            `Failed to start DHT for ${infoHash}: ${formatUnknownError(err)}`
-          );
-        });
+      getSharedDht(port).then((dht) => {
+        if (this.destroyed || !dht) return;
+        this.dht = dht;
+        dht.on("peer", this.onDhtPeer);
+        this.lookupAndAnnounce();
+      });
     }
   }
 

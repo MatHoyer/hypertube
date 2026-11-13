@@ -43,7 +43,10 @@ const getPeerServer = (): Promise<PeerServer> => {
       await server.listen(port);
       hypertubeLogger.info(`Torrent peer server listening on port ${port}`);
       return server;
-    })();
+    })().catch((error: unknown) => {
+      peerServerPromise = null; // let the next caller retry the listen
+      throw error;
+    });
   }
   return peerServerPromise;
 };
