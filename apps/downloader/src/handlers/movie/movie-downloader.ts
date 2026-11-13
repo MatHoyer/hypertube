@@ -402,9 +402,10 @@ export const downloadMovie = async (
       `source${path.extname(videoFile.name)}`
     );
     const videoTarget: TargetFile = { file: videoFile, scratchFilePath: sourcePath };
-    const sidecarTargets: TargetFile[] = sidecarSubtitleFiles.map((file) => ({
+    // Indexed names: two subtitles can share a basename in different folders.
+    const sidecarTargets: TargetFile[] = sidecarSubtitleFiles.map((file, i) => ({
       file,
-      scratchFilePath: path.join(scratchDir, path.basename(file.name)),
+      scratchFilePath: path.join(scratchDir, `subtitle-${i}${path.extname(file.name)}`),
     }));
 
     await engine.startDownload(

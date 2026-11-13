@@ -1,3 +1,4 @@
+import path from "node:path";
 import { isSidecarSubtitle } from "../download-torrent-subtitles.js";
 import type { TorrentFileMeta } from "./metadata.js";
 
@@ -49,8 +50,13 @@ export const selectTargetFiles = (
   const videoFile = findMainVideoFile(files);
   if (!videoFile) return null;
 
-  const sidecarSubtitleFiles = files.filter((file) =>
-    isSidecarSubtitle(file.name)
+  // Only subtitles in the video's own folder tree — in a multi-movie torrent
+  // the others belong to other videos.
+  const videoDir = path.dirname(videoFile.path);
+  const sidecarSubtitleFiles = files.filter(
+    (file) =>
+      isSidecarSubtitle(file.name) &&
+      (videoDir === "." || file.path.startsWith(videoDir + path.sep))
   );
   return { videoFile, sidecarSubtitleFiles };
 };
