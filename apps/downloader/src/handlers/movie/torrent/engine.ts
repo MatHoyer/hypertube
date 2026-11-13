@@ -30,6 +30,8 @@ type TorrentHandle = {
 };
 
 const handles = new Map<string, TorrentHandle>();
+/** Announce-only discovery for torrents we seed but no longer download, so peers can still find us. Torn down by destroy(). */
+const seedAnnouncers = new Map<string, PeerDiscovery>();
 let peerServerPromise: Promise<PeerServer> | null = null;
 
 /** One inbound-connection listener for the whole process, shared by every torrent — mirrors the old webtorrent.client.ts singleton client pattern. */
@@ -44,6 +46,16 @@ const getPeerServer = (): Promise<PeerServer> => {
     })();
   }
   return peerServerPromise;
+};
+
+const announceSeed = (infoHash: string, discovery: PeerDiscovery): void => {
+  seedAnnouncers.get(infoHash)?.destroy();
+  seedAnnouncers.set(infoHash, discovery);
+};
+
+const stopAnnouncingSeed = (infoHash: string): void => {
+  seedAnnouncers.get(infoHash)?.destroy();
+  seedAnnouncers.delete(infoHash);
 };
 
 const infoHashOf = (
@@ -130,6 +142,7 @@ export const addTorrent = async (
     throw error;
   }
 
+  stopAnnouncingSeed(infoHash); // this download's own discovery announces now
   handles.set(infoHash, {
     infoHash,
     metadata,
@@ -215,13 +228,13 @@ export const onDone = (infoHash: string): Promise<void> => {
   });
 };
 
-/** Stops dialing out for more peers/pieces — used once a download finishes, but also callable directly to abandon an in-progress download while still seeding whatever was verified so far. */
+/** Stops dialing out for more peers/pieces — used once a download finishes, but also callable directly to abandon an in-progress download while still seeding whatever was verified so far. Discovery keeps running, announce-only, so the seed stays findable. */
 export const stopDownloading = (infoHash: string): void => {
   const handle = handles.get(infoHash);
   if (!handle || handle.stoppedDownloading) return;
   handle.stoppedDownloading = true;
-  handle.discovery.destroy();
   handle.pool.destroy();
+  announceSeed(infoHash, handle.discovery);
 };
 
 /** Closes the target files' local scratch file handles without touching seeding — call once conversion/upload has read everything it needs, so an indefinitely-seeded torrent isn't holding scratch-dir fds (and the disk space behind them, even after the scratch dir itself is rm'd) open for its whole seeding lifetime. Reading/serving pieces to peers goes through the durable store, not these handles, so closing them is always safe once local materialization is done. */
@@ -252,13 +265,14 @@ class StaticSeedSource implements SeedSource {
 
 /**
  * Re-registers a previously-completed download as a seed after a process
- * restart, without spinning up peer discovery/dialing or touching local
- * scratch files at all — there's nothing left to fetch, so this only
- * self-verifies (SHA1) whatever the durable store already has for the
- * given target files and serves straight from there. No-op if this
- * infoHash is already active (e.g. a genuine download already in
- * progress registered it). Only works for a torrent whose full metadata
- * we can resolve without a peer round-trip (a real .torrent buffer, or a
+ * restart, without dialing out or touching local scratch files at all —
+ * there's nothing left to fetch, so this only self-verifies (SHA1) whatever
+ * the durable store already has for the given target files, serves
+ * straight from there, and announces (trackers + DHT) so peers can find
+ * us. No-op if this infoHash is already active (e.g. a genuine download
+ * already in progress registered it, or it is already seeded). Only works
+ * for a torrent whose full metadata we can resolve without a peer
+ * round-trip (a real .torrent buffer, or a
  * magnet already cached — see the roadmap's note on trackerless magnets
  * needing a live peer for BEP 9); a magnet with no cached metadata is
  * skipped with a warning rather than spinning up a whole discovery/pool
@@ -291,6 +305,15 @@ export const resumeSeeding = async (
     metadata.pieces.length,
     new StaticSeedSource(verifiedIndices, pieceStore, metadata)
   );
+  announceSeed(
+    infoHash,
+    new PeerDiscovery({
+      infoHash,
+      announce: metadata.announce,
+      peerId: getPeerId(),
+      port: peerServer.port,
+    })
+  );
 };
 
 export const isSeeding = async (infoHash: string): Promise<boolean> => {
@@ -311,6 +334,7 @@ export const destroy = async (infoHash: string): Promise<void> => {
     await handle.pieceManager?.destroy();
     handles.delete(infoHash);
   }
+  stopAnnouncingSeed(infoHash);
 
   const peerServer = await getPeerServer();
   peerServer.unregister(infoHash);
