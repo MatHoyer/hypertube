@@ -11,7 +11,7 @@ import {
   prisma,
   TDownloadJobData,
 } from "@hypertube/server-core";
-import { Job } from "bullmq";
+import { Job, UnrecoverableError } from "bullmq";
 import ffmpeg from "fluent-ffmpeg";
 import * as fs from "fs";
 import * as os from "os";
@@ -78,7 +78,10 @@ const probeVideoMetadata = (filePath: string): Promise<VideoMetadata> => {
         duration <= 0
       ) {
         reject(
-          new Error(`Invalid or missing video duration: ${String(duration)}`)
+          // Same verified bytes on every retry, so the same result.
+          new UnrecoverableError(
+            `Invalid or missing video duration: ${String(duration)}`
+          )
         );
         return;
       }
@@ -347,7 +350,7 @@ export const downloadMovie = async (
     where: { id: resolutionId },
   });
   if (!dbResolution) {
-    throw new Error(`Resolution ${resolutionId} not found`);
+    throw new UnrecoverableError(`Resolution ${resolutionId} not found`);
   }
 
   const torrentObjectPath = getStoragePath(
@@ -397,7 +400,7 @@ export const downloadMovie = async (
 
     const selected = selectTargetFiles(metadata.files);
     if (!selected) {
-      throw new Error(
+      throw new UnrecoverableError(
         `Video file not found (supported: ${VIDEO_EXTENSIONS.join(", ")})`
       );
     }
