@@ -176,16 +176,24 @@ export class PeerConnection extends EventEmitter {
 
       socket.pipe(this.wire).pipe(socket);
 
-      // Only relevant post-handshake — pre-handshake failures settle() the
-      // connect() promise instead via the listeners above.
+      // Pre-handshake, a close or wire error fails connect() right away — a
+      // peer without this infoHash typically just hangs up, and waiting out
+      // settleTimeout would hold a dial slot for nothing.
       socket.on("close", () => {
         // An abrupt close doesn't end the piped wire, which would leave its
         // pending block requests unanswered — destroy() fails them.
         this.destroy();
         if (settled) this.emit("close");
+        else
+          settle(
+            new Error(
+              `Peer ${this.address.host}:${this.address.port} closed the connection before handshake`
+            )
+          );
       });
       this.wire.on("error", (err) => {
         if (settled) this.forwardError(err);
+        else settle(err);
       });
     });
   }
