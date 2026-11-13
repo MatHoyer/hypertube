@@ -18,6 +18,10 @@ export type PeerDiscoveryOptions = {
 };
 
 const DEFAULT_MAX_PEERS = 200;
+/** Re-announce to the DHT on this cadence for the torrent's whole life, seeding included — stored DHT peers expire after ~30 min. */
+const DHT_ANNOUNCE_INTERVAL_MS = 15 * 60_000;
+/** A starved pool may ask for a fresh DHT lookup at most this often. */
+const DHT_REFRESH_MIN_INTERVAL_MS = 60_000;
 
 /** Splits a tracker "peer" event's "host:port" string. IPv6 literals aren't a concern here — all trackers/peers this app talks to are plain IPv4. */
 const parseAddr = (addr: string): PeerAddress | null => {
@@ -83,6 +87,8 @@ export class PeerDiscovery extends EventEmitter {
   private readonly maxPeers: number;
   private readonly port: number;
   private destroyed = false;
+  private lastLookupAt = 0;
+  private readonly dhtTimer: ReturnType<typeof setInterval> | null;
 
   constructor({
     infoHash,
@@ -117,6 +123,9 @@ export class PeerDiscovery extends EventEmitter {
       this.tracker.start();
     }
 
+    this.dhtTimer = useDht
+      ? setInterval(() => this.lookupAndAnnounce(), DHT_ANNOUNCE_INTERVAL_MS)
+      : null;
     if (useDht) {
       getSharedDht(port)
         .then((dht) => {
@@ -148,7 +157,8 @@ export class PeerDiscovery extends EventEmitter {
   /** Lookup finds peers; announce afterwards (reusing the lookup's routing table) lets DHT peers find and dial us. */
   private lookupAndAnnounce(): void {
     const dht = this.dht;
-    if (!dht) return;
+    if (!dht || this.destroyed) return;
+    this.lastLookupAt = Date.now();
     dht.lookup(this.infoHash, (err) => {
       if (err) {
         hypertubeLogger.warn(
@@ -160,15 +170,20 @@ export class PeerDiscovery extends EventEmitter {
     });
   }
 
-  /** Re-announces to trackers and re-runs a DHT lookup — use when the connection pool is starved for candidates (e.g. every existing peer disconnected). */
+  /**
+   * Re-runs a DHT lookup (rate-limited) — use when the connection pool is
+   * starved for candidates. Deliberately no tracker re-announce: the tracker
+   * client already re-announces on the interval each tracker asks for, and
+   * announcing faster risks getting banned.
+   */
   refresh(): void {
     if (this.destroyed) return;
+    if (Date.now() - this.lastLookupAt < DHT_REFRESH_MIN_INTERVAL_MS) return;
     // Forget already-seen addresses so peers that dropped or failed to dial
-    // earlier get re-emitted — the pool dedupes against live connections
-    // itself. Without this a long download drains its peers and stalls once
-    // the first maxPeers addresses are used up.
+    // earlier get re-emitted if the lookup returns them — the pool dedupes
+    // against live connections itself. Without this a long download drains
+    // its peers and stalls once the first maxPeers addresses are used up.
     this.seen.clear();
-    this.tracker?.update();
     this.lookupAndAnnounce();
   }
 
@@ -176,6 +191,7 @@ export class PeerDiscovery extends EventEmitter {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    if (this.dhtTimer) clearInterval(this.dhtTimer);
     this.tracker?.destroy();
     if (this.useDht) this.dht?.removeListener("peer", this.onDhtPeer);
   }
