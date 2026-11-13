@@ -49,6 +49,8 @@ export class PeerServer {
   private readonly pieceCounts = new Map<string, number>();
   /** Set while a torrent is still downloading: inbound peers are handed over so we download from them too, not only seed to them. */
   private readonly onInboundPeer = new Map<string, (connection: PeerConnection) => void>();
+  /** Handshaken inbound sockets per infoHash, so unregister can cut off peers already being served. */
+  private readonly inboundSockets = new Map<string, Set<net.Socket>>();
   private server: net.Server | null = null;
   private inboundCount = 0;
 
@@ -74,6 +76,8 @@ export class PeerServer {
     this.sources.delete(key);
     this.pieceCounts.delete(key);
     this.onInboundPeer.delete(key);
+    for (const socket of this.inboundSockets.get(key) ?? []) socket.destroy();
+    this.inboundSockets.delete(key);
   }
 
   isRegistered(infoHash: string): boolean {
@@ -145,6 +149,10 @@ export class PeerServer {
         socket.destroy();
         return;
       }
+      const sockets = this.inboundSockets.get(key) ?? new Set<net.Socket>();
+      this.inboundSockets.set(key, sockets);
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
       const pieceCount = this.pieceCounts.get(key) ?? 0;
       wire.handshake(infoHash, this.peerId);
       wire.bitfield(buildBitfield(source, pieceCount));
