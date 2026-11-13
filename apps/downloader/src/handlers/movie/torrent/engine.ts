@@ -288,7 +288,8 @@ export const resumeSeeding = async (
 ): Promise<void> => {
   const identifier = await parseTorrentIdentifier(torrentIdOrMagnet);
   const infoHash = infoHashOf(identifier);
-  if (handles.has(infoHash)) return;
+  const peerServer = await getPeerServer();
+  if (handles.has(infoHash) || peerServer.isRegistered(infoHash)) return;
 
   if (identifier.kind !== "full") {
     hypertubeLogger.warn(
@@ -302,7 +303,9 @@ export const resumeSeeding = async (
   const neededPieceIndices = computeNeededPieceIndices(metadata, targetFiles);
   const verifiedIndices = await pieceStore.findVerifiedPieces(neededPieceIndices);
 
-  const peerServer = await getPeerServer();
+  // A download of this infoHash may have started while we verified — never
+  // overwrite its live PieceManager registration with this static snapshot.
+  if (handles.has(infoHash) || peerServer.isRegistered(infoHash)) return;
   peerServer.register(
     infoHash,
     metadata.pieces.length,
