@@ -101,6 +101,11 @@ export class PeerServer {
     });
   }
 
+  /** The port actually bound — what to advertise to trackers/DHT. */
+  get port(): number {
+    return (this.server?.address() as net.AddressInfo | null)?.port ?? 0;
+  }
+
   close(): void {
     this.server?.close();
     this.server = null;

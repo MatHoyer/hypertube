@@ -107,7 +107,7 @@ export const addTorrent = async (
   }
 
   const peerId = getPeerId();
-  const port = await resolveListenPort();
+  const { port } = await getPeerServer();
   const announce =
     identifier.kind === "full" ? identifier.metadata.announce : identifier.announce;
 
