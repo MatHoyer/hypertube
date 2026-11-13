@@ -9,7 +9,7 @@ import {
   prisma,
   TDownloadJobData,
 } from "@hypertube/server-core";
-import { Job } from "bullmq";
+import { Job, UnrecoverableError } from "bullmq";
 import { notifySubscribers } from "../../notifications/notifySubscriber.js";
 import { downloadMovie } from "./movie-downloader.js";
 
@@ -19,10 +19,16 @@ export const downloadMovieHandler = async (
 ) => {
   hypertubeLogger.info(`[${job.data.movie.id}] Download torrent job started`);
 
-  await prisma.resolution.update({
+  const { count } = await prisma.resolution.updateMany({
     where: { id: job.data.resolutionId },
     data: { downloadState: DownloadStates.DOWNLOADING },
   });
+  if (count === 0) {
+    // Deleted while queued (e.g. movie cleanup cron): no retry can fix that.
+    throw new UnrecoverableError(
+      `Resolution ${job.data.resolutionId} not found`
+    );
+  }
 
   return downloadMovie(job, token);
 };
