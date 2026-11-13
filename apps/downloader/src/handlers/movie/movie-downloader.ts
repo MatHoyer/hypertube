@@ -316,6 +316,27 @@ const handleSidecarSubtitleFile = async (
   ]);
 };
 
+// `||`, not `??`: an empty TORRENT_SCRATCH_DIR= would otherwise mean the cwd.
+const SCRATCH_ROOT =
+  env.TORRENT_SCRATCH_DIR || path.join(os.tmpdir(), "hypertube-downloader");
+// Per-job scratch dirs are named after the resolution id (a uuid).
+const SCRATCH_DIR_NAME =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Removes scratch dirs a crash left behind (a fatal exit skips downloadMovie's cleanup). Only safe before the worker starts, while no job can own one. */
+export const sweepScratchDirs = () => {
+  let names: string[];
+  try {
+    names = fs.readdirSync(SCRATCH_ROOT);
+  } catch {
+    return; // no scratch root yet
+  }
+  for (const name of names.filter((name) => SCRATCH_DIR_NAME.test(name))) {
+    fs.rmSync(path.join(SCRATCH_ROOT, name), { recursive: true, force: true });
+    hypertubeLogger.info(`Removed leftover scratch dir ${name}`);
+  }
+};
+
 export const downloadMovie = async (
   job: Job<TDownloadJobData>,
   token?: string
@@ -346,10 +367,7 @@ export const downloadMovie = async (
     : torrentBuf;
 
   const { infoHash, metadata, torrentFile } = await engine.addTorrent(torrentId);
-  const scratchDir = path.join(
-    env.TORRENT_SCRATCH_DIR ?? path.join(os.tmpdir(), "hypertube-downloader"),
-    resolutionId
-  );
+  const scratchDir = path.join(SCRATCH_ROOT, resolutionId);
   // Another resolution row sharing this infoHash may already be seeding it —
   // a failure of this job must not take that seed down with it.
   let wasSeeding = false;

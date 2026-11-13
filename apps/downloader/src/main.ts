@@ -16,6 +16,7 @@ import {
   downloadMovieHandler,
   downloadMovieSuccessHandler,
 } from "./handlers/movie/download-movie.handler.js";
+import { sweepScratchDirs } from "./handlers/movie/movie-downloader.js";
 import { reconcileSeeds } from "./handlers/movie/seed-reconciliation.js";
 import * as engine from "./handlers/movie/torrent/engine.js";
 import { gracefulShutdown } from "./shutdown.js";
@@ -45,6 +46,8 @@ let activeJob: { job: Job; token: string } | null = null;
 // detection (stalledInterval, default 30s) can reclaim it quickly instead of
 // waiting up to lockDuration.
 export const DOWNLOAD_JOB_LOCK_DURATION = 90000;
+
+sweepScratchDirs();
 
 const worker = new Worker<TDownloadJobData>(
   MOVIE_QUEUE,
