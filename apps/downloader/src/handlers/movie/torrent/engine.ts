@@ -13,7 +13,7 @@ import { PeerConnection, PeerConnectionPool } from "./peer-connection.js";
 import { PeerDiscovery } from "./peer-discovery.js";
 import type { SeedSource } from "./peer-server.js";
 import { PeerServer } from "./peer-server.js";
-import { computeNeededPieceIndices } from "./piece-ranges.js";
+import { computeNeededPieceIndices, pieceByteLength } from "./piece-ranges.js";
 import { PieceManager, type TargetFile } from "./piece-manager.js";
 import { PieceStore } from "./piece-store.js";
 
@@ -221,11 +221,16 @@ export const closeScratchFiles = async (infoHash: string): Promise<void> => {
 class StaticSeedSource implements SeedSource {
   constructor(
     private readonly verifiedIndices: Set<number>,
-    private readonly pieceStore: PieceStore
+    private readonly pieceStore: PieceStore,
+    private readonly metadata: TorrentMetadata
   ) {}
 
   hasPiece(index: number): boolean {
     return this.verifiedIndices.has(index);
+  }
+
+  pieceLength(index: number): number {
+    return pieceByteLength(this.metadata, index);
   }
 
   readPieceRange(index: number, offset: number, length: number): Promise<Buffer> {
@@ -272,7 +277,7 @@ export const resumeSeeding = async (
   peerServer.register(
     infoHash,
     metadata.pieces.length,
-    new StaticSeedSource(verifiedIndices, pieceStore)
+    new StaticSeedSource(verifiedIndices, pieceStore, metadata)
   );
 };
 

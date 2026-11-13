@@ -242,6 +242,8 @@ export type PeerConnectionPoolOptions = {
 const DEFAULT_CONCURRENCY = 30;
 const REFRESH_MIN_INTERVAL_MS = 15000;
 const PUMP_INTERVAL_MS = 30000;
+/** Inbound peers adopted into a download are allowed on top of the dial-out `concurrency`, but still bounded so a flood of inbound connections can't grow the pool without limit. */
+const INBOUND_PEER_ALLOWANCE = 20;
 
 /**
  * Dials candidates handed out by a PeerDiscovery pool, bounded to
@@ -351,6 +353,10 @@ export class PeerConnectionPool extends EventEmitter {
     if (this.destroyed) return;
     const key = `${connection.address.host}:${connection.address.port}`;
     if (this.active.has(key)) return;
+    if (this.active.size >= this.concurrency + INBOUND_PEER_ALLOWANCE) {
+      connection.destroy();
+      return;
+    }
     this.active.set(key, connection);
     connection.once("close", () => this.retire(key, connection.address));
     connection.once("error", () => this.retire(key, connection.address));

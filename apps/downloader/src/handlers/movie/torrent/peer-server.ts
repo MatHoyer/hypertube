@@ -1,12 +1,23 @@
 import { formatUnknownError, hypertubeLogger } from "@hypertube/libs";
 import * as net from "node:net";
 import Wire from "bittorrent-protocol";
-import { PeerConnection } from "./peer-connection.js";
+import { BLOCK_LENGTH, PeerConnection } from "./peer-connection.js";
 
 export interface SeedSource {
   hasPiece(index: number): boolean;
+  /** Byte length of this piece — the last piece of a torrent is shorter, so this bounds what a peer may legitimately request. */
+  pieceLength(index: number): number;
   readPieceRange(index: number, offset: number, length: number): Promise<Buffer>;
 }
+
+/** Hard ceiling on simultaneous inbound sockets across all seeded infoHashes — without it idle/never-handshaking peers exhaust file descriptors. */
+const MAX_INBOUND_CONNECTIONS = 500;
+/** Drop a socket that connects but never completes the BitTorrent handshake. */
+const HANDSHAKE_TIMEOUT_MS = 10_000;
+/** Drop a handshaken peer that then goes silent, so a seed-only connection can't sit open forever. */
+const IDLE_TIMEOUT_MS = 2 * 60_000;
+/** Cap concurrent piece reads per peer — a peer pipelining thousands of requests would otherwise blow up memory and S3 connections. */
+const MAX_CONCURRENT_READS_PER_WIRE = 8;
 
 /**
  * A piece's worth of bits, MSB-first (BitTorrent wire format) — same layout
@@ -39,6 +50,7 @@ export class PeerServer {
   /** Set while a torrent is still downloading: inbound peers are handed over so we download from them too, not only seed to them. */
   private readonly onInboundPeer = new Map<string, (connection: PeerConnection) => void>();
   private server: net.Server | null = null;
+  private inboundCount = 0;
 
   constructor(peerId: string) {
     this.peerId = peerId;
@@ -95,6 +107,20 @@ export class PeerServer {
   }
 
   private handleInbound(socket: net.Socket): void {
+    if (this.inboundCount >= MAX_INBOUND_CONNECTIONS) {
+      socket.destroy();
+      return;
+    }
+    this.inboundCount += 1;
+    socket.once("close", () => {
+      this.inboundCount -= 1;
+    });
+
+    // Starts as a handshake deadline; relaxed to an idle deadline once the
+    // peer handshakes. Either way a silent socket is torn down, not leaked.
+    socket.setTimeout(HANDSHAKE_TIMEOUT_MS);
+    socket.on("timeout", () => socket.destroy());
+
     const wire = new Wire();
     socket.pipe(wire).pipe(socket);
     socket.on("error", () => {
@@ -105,6 +131,7 @@ export class PeerServer {
     });
 
     let source: SeedSource | null = null;
+    let inFlightReads = 0;
 
     wire.once("handshake", (infoHash: string, _remotePeerId: string) => {
       const key = infoHash.toLowerCase();
@@ -117,7 +144,15 @@ export class PeerServer {
       wire.handshake(infoHash, this.peerId);
       wire.bitfield(buildBitfield(source, pieceCount));
       wire.unchoke();
-      this.onInboundPeer.get(key)?.(PeerConnection.fromInbound(socket, wire));
+      const onInbound = this.onInboundPeer.get(key);
+      if (onInbound) {
+        // Adopted into the download pool, which installs its own wire-level
+        // keep-alive/request timeout — the socket-level timer would conflict.
+        socket.setTimeout(0);
+        onInbound(PeerConnection.fromInbound(socket, wire));
+      } else {
+        socket.setTimeout(IDLE_TIMEOUT_MS);
+      }
     });
 
     wire.on(
@@ -129,6 +164,20 @@ export class PeerServer {
         cb: (err: Error | null, block: Buffer) => void
       ) => {
         if (!source?.hasPiece(index)) return;
+        // Validate against the peer's own (untrusted) offset/length: a zero
+        // length makes an invalid S3 range (whole piece), and an oversized or
+        // out-of-piece range wastes memory/bandwidth. BEP3: close the peer.
+        if (
+          length <= 0 ||
+          length > BLOCK_LENGTH ||
+          offset < 0 ||
+          offset + length > source.pieceLength(index)
+        ) {
+          socket.destroy();
+          return;
+        }
+        if (inFlightReads >= MAX_CONCURRENT_READS_PER_WIRE) return; // drop; peer's request timeout handles it
+        inFlightReads += 1;
         source
           .readPieceRange(index, offset, length)
           .then((block) => cb(null, block))
@@ -136,6 +185,9 @@ export class PeerServer {
             hypertubeLogger.warn(
               `Peer server failed to serve piece ${index} offset ${offset}: ${formatUnknownError(error)}`
             );
+          })
+          .finally(() => {
+            inFlightReads -= 1;
           });
       }
     );

@@ -269,6 +269,11 @@ export class PieceManager extends EventEmitter implements SeedSource {
     return this.pieceState.get(index) === "done";
   }
 
+  /** SeedSource: byte length of a piece, so inbound requests can be bounds-checked. */
+  pieceLength(index: number): number {
+    return pieceByteLength(this.metadata, index);
+  }
+
   get isDone(): boolean {
     return this.doneEmitted;
   }
