@@ -114,6 +114,13 @@ Run all workers in dev mode (hot reload):
 pnpm dev
 ```
 
+⚠️ In this mode the downloader runs on the host, so its torrent traffic leaves through your own IP, not the VPN (and only outbound: it listens on `TORRENT_PORT`, with no forwarded port). To keep torrenting behind the VPN, run the containerized downloader instead, which shares the `vpn` container's network:
+
+```bash
+# run the other apps on their own (pnpm dev:server, pnpm dev:client, ...), then:
+docker compose -f docker-compose-prod.yml up -d --build --no-deps downloader
+```
+
 ### 🔹 Option 2 — Prod with Docker (no hot reload)
 
 Runs `client` (nginx), `server` and `scheduler` as separate containers — scales each independently.

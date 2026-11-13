@@ -1,7 +1,5 @@
 services:
   vpn:
     ports:
-      - "${TORRENT_PORT}:${TORRENT_PORT}"
-      - "${TORRENT_PORT}:${TORRENT_PORT}/udp"
       - "${PROWLARR_PORT}:${PROWLARR_PORT}"
       - "${SUBTITLE_PROXY_PORT}:${SUBTITLE_PROXY_PORT}"
