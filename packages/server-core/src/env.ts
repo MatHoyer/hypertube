@@ -45,7 +45,9 @@ const envSchema = z.object({
   DISCORD_CLIENT_SECRET: z.string(),
   SCHOOL_42_CLIENT_ID: z.string(),
   SCHOOL_42_CLIENT_SECRET: z.string(),
-  TORRENT_PORT: z.coerce.number(),
+  // Downloader-only fallback listen port; defaulted so other services and
+  // pre-engine .env files still boot without it.
+  TORRENT_PORT: z.coerce.number().default(51413),
   TORRENT_SCRATCH_DIR: z.string().optional(),
   S3_ENDPOINT: z.string(),
   S3_PORT: z.coerce.number().optional(),
