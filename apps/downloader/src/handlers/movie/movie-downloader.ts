@@ -350,8 +350,12 @@ export const downloadMovie = async (
     env.TORRENT_SCRATCH_DIR ?? path.join(os.tmpdir(), "hypertube-downloader"),
     resolutionId
   );
+  // Another resolution row sharing this infoHash may already be seeding it —
+  // a failure of this job must not take that seed down with it.
+  let wasSeeding = false;
 
   try {
+    wasSeeding = await engine.isSeeding(infoHash);
     if (dbResolution.infoHash !== infoHash) {
       await prisma.resolution.update({
         where: { id: resolutionId },
@@ -571,7 +575,12 @@ export const downloadMovie = async (
     const err =
       error instanceof Error ? error : new Error(formatUnknownError(error));
     reportJobLog(job, `FAILED: ${err.message}`);
-    await engine.destroy(infoHash);
+    if (wasSeeding) {
+      engine.stopDownloading(infoHash);
+      await engine.closeScratchFiles(infoHash);
+    } else {
+      await engine.destroy(infoHash);
+    }
     throw err;
   } finally {
     await fs.promises.rm(scratchDir, { recursive: true, force: true });
