@@ -33,7 +33,34 @@ export class PeerConnection extends EventEmitter {
     // Must be registered before the handshake: the extended handshake that
     // advertises ut_metadata goes out with it, and magnet starts need it.
     // An inbound wire arrives already handshaken (metadata is known by then).
-    if (!wire) this.wire.use(utMetadata());
+    if (!wire) {
+      this.wire.use(utMetadata());
+      this.guardMetadataExtension();
+    }
+  }
+
+  /**
+   * ut_metadata@5.0.1 _onData() does `metadata.set(buf, piece * 16384)` with no
+   * bounds check, so a peer's data message (msg_type 1) with a huge or early
+   * piece index throws (RangeError, or TypeError before the size is known)
+   * synchronously inside bittorrent-protocol's wire parsing. That throw is an
+   * uncaughtException, which main.ts turns into process.exit(1) — one hostile
+   * peer restarts the whole downloader. Contain any such throw to this wire.
+   */
+  private guardMetadataExtension(): void {
+    const ext = (this.wire as unknown as { ut_metadata: { onMessage(buf: Buffer): void } })
+      .ut_metadata;
+    const onMessage = ext.onMessage.bind(ext);
+    ext.onMessage = (buf: Buffer) => {
+      try {
+        onMessage(buf);
+      } catch (err) {
+        hypertubeLogger.warn(
+          `Destroying peer ${this.address.host}:${this.address.port} after bad ut_metadata message: ${formatUnknownError(err)}`
+        );
+        this.destroy();
+      }
+    };
   }
 
   /** Wraps a peer that dialed us (already handshaken by PeerServer) so the piece manager can download from it too — most of a swarm sits behind NAT and can only reach us, never be dialed. */

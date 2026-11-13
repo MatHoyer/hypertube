@@ -73,6 +73,20 @@ export const parseTorrentIdentifier = async (
 const METADATA_FETCH_TIMEOUT_MS = 60000;
 
 /**
+ * Stops a wire's ut_metadata extension from fetching. Called on every other
+ * swarm wire once one peer has delivered the info dict, so the rest aren't
+ * left requesting metadata (and re-requesting on reject) for their lifetime.
+ * No-op on wires without the extension (e.g. adopted inbound peers).
+ */
+export const stopMetadataFetch = (wire: Wire): void => {
+  try {
+    (wire as unknown as { ut_metadata?: { cancel(): void } }).ut_metadata?.cancel();
+  } catch {
+    // extension absent or already torn down — nothing to stop
+  }
+};
+
+/**
  * Fetches the info dict from a single already-connected peer via BEP 9
  * (ut_metadata), for magnet-only starts that have no piece/file info yet.
  * The wire must have had ut_metadata registered before its handshake (see
@@ -134,6 +148,7 @@ export const fetchMetadataFromPeer = (
     };
     const cleanup = () => {
       clearTimeout(timeout);
+      ext.cancel(); // stop asking this wire for metadata once we're done with it
       ext.removeListener("metadata", onMetadata);
       ext.removeListener("warning", onWarning);
       wire.removeListener("close", onClose);

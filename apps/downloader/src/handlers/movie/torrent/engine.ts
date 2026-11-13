@@ -4,6 +4,7 @@ import { resolveListenPort } from "./listen-port.js";
 import {
   fetchMetadataFromPeer,
   parseTorrentIdentifier,
+  stopMetadataFetch,
   type TorrentFileMeta,
   type TorrentMetadata,
 } from "./metadata.js";
@@ -61,6 +62,8 @@ const fetchMetadataFromSwarm = (
         (metadata) => {
           clearTimeout(timeout);
           pool.off("wire", onWire);
+          // Stop every other wire from fetching metadata we now have.
+          for (const peer of pool.connections) stopMetadataFetch(peer.wire);
           resolve(metadata);
         },
         () => {} // this peer can't serve it; keep waiting for others
