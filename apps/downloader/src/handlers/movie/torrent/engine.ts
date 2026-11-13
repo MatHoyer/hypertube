@@ -199,8 +199,13 @@ export const onDone = (infoHash: string): Promise<void> => {
       new Error(`startDownload was never called for ${infoHash}`)
     );
   }
-  if (handle.pieceManager.isDone) return Promise.resolve();
-  return new Promise((resolve) => handle.pieceManager?.once("done", () => resolve()));
+  const { pieceManager } = handle;
+  if (pieceManager.isDone) return Promise.resolve();
+  if (pieceManager.failure) return Promise.reject(pieceManager.failure);
+  return new Promise((resolve, reject) => {
+    pieceManager.once("done", () => resolve());
+    pieceManager.once("failed", reject);
+  });
 };
 
 /** Stops dialing out for more peers/pieces — used once a download finishes, but also callable directly to abandon an in-progress download while still seeding whatever was verified so far. */

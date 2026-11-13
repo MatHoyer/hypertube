@@ -59,6 +59,8 @@ export class PieceManager extends EventEmitter implements SeedSource {
   private inFlightPieceCount = 0;
   private destroyed = false;
   private doneEmitted = false;
+  /** Set when a local I/O error makes the download unfinishable — retrying the piece from another peer can't fix a full disk or a closed scratch file. */
+  private failureError: Error | null = null;
 
   constructor({ metadata, targetFiles, pool, pieceStore }: PieceManagerOptions) {
     super();
@@ -146,7 +148,7 @@ export class PieceManager extends EventEmitter implements SeedSource {
   }
 
   private scheduleMore(): void {
-    if (this.destroyed) return;
+    if (this.destroyed || this.failureError) return;
     for (const index of this.neededPieceIndices) {
       if (this.inFlightPieceCount >= MAX_PIECES_IN_FLIGHT) break;
       if (this.pieceState.get(index) !== "needed") continue;
@@ -210,7 +212,16 @@ export class PieceManager extends EventEmitter implements SeedSource {
         return;
       }
 
-      await this.writePieceToFiles(index, pieceBuffer);
+      try {
+        await this.writePieceToFiles(index, pieceBuffer);
+      } catch (writeError) {
+        this.fail(
+          new Error(
+            `Failed to write piece ${index} to scratch file: ${formatUnknownError(writeError)}`
+          )
+        );
+        return;
+      }
       if (this.pieceStore) {
         try {
           await this.pieceStore.writePiece(index, pieceBuffer);
@@ -278,6 +289,10 @@ export class PieceManager extends EventEmitter implements SeedSource {
     return this.doneEmitted;
   }
 
+  get failure(): Error | null {
+    return this.failureError;
+  }
+
   get progress(): { verifiedPieces: number; totalPieces: number } {
     return {
       verifiedPieces: this.verifiedCount,
@@ -303,6 +318,13 @@ export class PieceManager extends EventEmitter implements SeedSource {
     if (this.doneEmitted) return;
     this.doneEmitted = true;
     this.emit("done");
+  }
+
+  private fail(error: Error): void {
+    if (this.failureError) return;
+    this.failureError = error;
+    hypertubeLogger.error(`Torrent ${this.metadata.infoHash}: ${error.message}`);
+    this.emit("failed", error);
   }
 
   async destroy(): Promise<void> {
