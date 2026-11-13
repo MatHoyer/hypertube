@@ -47,8 +47,11 @@ export class PieceStore {
     return getTorrentPieceObjectName(this.metadata.infoHash, index);
   }
 
-  /** Self-verifies whatever's already in S3 among the given candidate indices; returns just the ones that hash-check out. Bounded concurrency — hundreds of pieces would be slow fully serial. */
-  async findVerifiedPieces(candidateIndices: number[]): Promise<Set<number>> {
+  /** Self-verifies whatever's already in S3 among the given candidate indices; returns just the ones that hash-check out. Bounded concurrency — hundreds of pieces would be slow fully serial. `onVerified` gets each verified piece's bytes, so a resuming caller needn't read it from S3 a second time; its errors propagate. */
+  async findVerifiedPieces(
+    candidateIndices: number[],
+    onVerified?: (index: number, pieceBuffer: Buffer) => Promise<void>
+  ): Promise<Set<number>> {
     const existingObjectNames = new Set(
       await this.storageService.listObjectNamesByPrefix(
         BUCKETS.TORRENT_PIECES,
@@ -63,15 +66,19 @@ export class PieceStore {
       while (cursor < candidateIndices.length) {
         const index = candidateIndices[cursor++];
         if (!existingObjectNames.has(this.objectName(index))) continue;
+        let verifiedBuffer: Buffer | null = null;
         try {
           const pieceBuffer = await this.readPiece(index);
           const hash = createHash("sha1").update(pieceBuffer).digest("hex");
-          if (hash === this.metadata.pieces[index]) verified.add(index);
+          if (hash === this.metadata.pieces[index]) verifiedBuffer = pieceBuffer;
         } catch (error) {
           hypertubeLogger.warn(
             `Torrent ${this.metadata.infoHash}: failed to self-verify stored piece ${index}: ${formatUnknownError(error)}`
           );
         }
+        if (!verifiedBuffer) continue;
+        await onVerified?.(index, verifiedBuffer);
+        verified.add(index);
       }
     };
     await Promise.all(

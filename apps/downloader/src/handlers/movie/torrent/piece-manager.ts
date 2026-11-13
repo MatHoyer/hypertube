@@ -82,11 +82,10 @@ export class PieceManager extends EventEmitter implements SeedSource {
 
     if (this.pieceStore) {
       const alreadyVerified = await this.pieceStore.findVerifiedPieces(
-        this.neededPieceIndices
+        this.neededPieceIndices,
+        (index, pieceBuffer) => this.writePieceToFiles(index, pieceBuffer)
       );
       for (const index of alreadyVerified) {
-        const pieceBuffer = await this.pieceStore.readPiece(index);
-        await this.writePieceToFiles(index, pieceBuffer);
         this.pieceState.set(index, "done");
         this.verifiedCount++;
       }
