@@ -70,12 +70,12 @@ export const downloadMovieFailureHandler = async (
 
   // BullMQ retries (see downloadTorrent.ts's producer opts) resume from the
   // S3 piece store rather than restarting, so an intermediate attempt
-  // failing isn't a real "not downloaded" state — only flip the DB/notify
-  // subscribers once every attempt has actually been exhausted.
-  const attemptsLimit = job.opts.attempts ?? 1;
-  if (job.attemptsMade < attemptsLimit) {
+  // failing isn't a real "not downloaded" state — only flip the DB once
+  // BullMQ actually gave up. moveToFailed sets finishedOn only on a final
+  // failure (attempts exhausted, or an UnrecoverableError), not on a retry.
+  if (!job.finishedOn) {
     hypertubeLogger.info(
-      `[${job.data.movie.id}] Attempt ${job.attemptsMade}/${attemptsLimit} failed, BullMQ will retry`
+      `[${job.data.movie.id}] Attempt ${job.attemptsMade}/${job.opts.attempts ?? 1} failed, BullMQ will retry`
     );
     return;
   }

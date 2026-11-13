@@ -70,6 +70,30 @@ const worker = new Worker<TDownloadJobData>(
 
 hypertubeLogger.info(`Downloader worker started`);
 
+const onJobFailed = async (job: Job | undefined, err: Error) => {
+  if (!job) {
+    hypertubeLogger.error("Job not found");
+    return;
+  }
+
+  switch (job.name) {
+    case MOVIE_QUEUE_JOB_NAMES.DOWNLOAD_MOVIE:
+      return downloadMovieFailureHandler(job, err);
+    case MOVIE_QUEUE_JOB_NAMES.PREVIEW_MOVIE:
+      hypertubeLogger.info(
+        `[${job.data.movie.id}] Movie preview failed: ${err}`
+      );
+      return;
+    case MOVIE_QUEUE_JOB_NAMES.STOP_SEEDING:
+      hypertubeLogger.error(`Stop-seeding job failed: ${err}`);
+      return;
+    default:
+      throw new Error(`Unknown job name: ${job.name}`);
+  }
+};
+
+worker.on("failed", onJobFailed);
+
 /**
  * Some errors (e.g. a chunk-store constructor throwing synchronously inside
  * webtorrent's internal event dispatch) happen outside any promise chain a
@@ -86,11 +110,12 @@ const handleFatalError = (error: unknown) => {
   (async () => {
     if (job) {
       try {
-        await job.job.moveToFailed(
-          error instanceof Error ? error : new Error(formatUnknownError(error)),
-          job.token,
-          false
-        );
+        const err =
+          error instanceof Error ? error : new Error(formatUnknownError(error));
+        await job.job.moveToFailed(err, job.token, false);
+        // A direct moveToFailed bypasses the worker's own failure path, so
+        // its 'failed' event never fires — run the same handling ourselves.
+        await onJobFailed(job.job, err);
       } catch (moveError) {
         hypertubeLogger.error(
           `Failed to mark job ${job.job.id} as failed: ${formatUnknownError(moveError)}`
@@ -124,28 +149,6 @@ worker.on("completed", async (job) => {
       hypertubeLogger.info(`[${job.data.movie.id}] Movie preview success`);
       return;
     case MOVIE_QUEUE_JOB_NAMES.STOP_SEEDING:
-      return;
-    default:
-      throw new Error(`Unknown job name: ${job.name}`);
-  }
-});
-
-worker.on("failed", async (job, err) => {
-  if (!job) {
-    hypertubeLogger.error("Job not found");
-    return;
-  }
-
-  switch (job.name) {
-    case MOVIE_QUEUE_JOB_NAMES.DOWNLOAD_MOVIE:
-      return downloadMovieFailureHandler(job, err);
-    case MOVIE_QUEUE_JOB_NAMES.PREVIEW_MOVIE:
-      hypertubeLogger.info(
-        `[${job.data.movie.id}] Movie preview failed: ${err}`
-      );
-      return;
-    case MOVIE_QUEUE_JOB_NAMES.STOP_SEEDING:
-      hypertubeLogger.error(`Stop-seeding job failed: ${err}`);
       return;
     default:
       throw new Error(`Unknown job name: ${job.name}`);
