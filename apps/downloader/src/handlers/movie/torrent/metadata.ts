@@ -1,5 +1,5 @@
 import { formatUnknownError } from "@hypertube/libs";
-import parseTorrent from "parse-torrent";
+import parseTorrent, { toTorrentFile } from "parse-torrent";
 import type Wire from "bittorrent-protocol";
 import type { UtMetadata } from "ut_metadata";
 
@@ -70,6 +70,16 @@ export const parseTorrentIdentifier = async (
   };
 };
 
+/** A BEP 9 fetch's result: the parsed metadata plus the bencoded info dict as a .torrent, so it can be cached and parsed locally next time. */
+export type FetchedMetadata = { metadata: TorrentMetadata; torrentFile: Buffer };
+
+/** Builds a .torrent from a BEP 9 info-dict-only torrent plus the magnet's trackers — without them a cached copy would never announce. */
+export const buildTorrentFile = async (
+  infoTorrent: Buffer,
+  announce: string[]
+): Promise<Buffer> =>
+  Buffer.from(toTorrentFile({ ...(await parseTorrent(infoTorrent)), announce }));
+
 const METADATA_FETCH_TIMEOUT_MS = 60000;
 
 /**
@@ -99,7 +109,7 @@ export const fetchMetadataFromPeer = (
   wire: Wire,
   infoHash: string,
   timeoutMs = METADATA_FETCH_TIMEOUT_MS
-): Promise<TorrentMetadata> => {
+): Promise<FetchedMetadata> => {
   return new Promise((resolve, reject) => {
     // wire.use() assigns the extension instance under this well-known key
     // (bittorrent-protocol's `use()` reads it off `Extension.prototype.name`)
@@ -127,7 +137,7 @@ export const fetchMetadataFromPeer = (
           );
           return;
         }
-        resolve(identifier.metadata);
+        resolve({ metadata: identifier.metadata, torrentFile: metadataBuffer });
       } catch (error) {
         reject(
           new Error(
@@ -181,5 +191,5 @@ export const resolveMetadata = async (
     );
   }
   const wire = await opts.getPeerWire();
-  return fetchMetadataFromPeer(wire, identifier.infoHash);
+  return (await fetchMetadataFromPeer(wire, identifier.infoHash)).metadata;
 };

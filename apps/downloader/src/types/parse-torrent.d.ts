@@ -28,7 +28,11 @@ declare module "parse-torrent" {
     /** Raw magnet `tr` param(s) — only present when parsed from a magnet URI; a single string or an array if repeated. */
     tr?: string | string[];
     urlList?: string[];
+    /** Decoded info dict — what toTorrentFile re-encodes. */
+    info?: unknown;
   };
+
+  export function toTorrentFile(parsed: ParsedTorrent): Uint8Array;
 
   export default function parseTorrent(
     torrentId: string | Buffer

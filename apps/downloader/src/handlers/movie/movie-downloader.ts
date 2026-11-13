@@ -329,14 +329,15 @@ export const downloadMovie = async (
     throw new Error(`Resolution ${resolutionId} not found`);
   }
 
+  const torrentObjectPath = getStoragePath(
+    movie.tmdbId.toString(),
+    "resolutions",
+    resolutionId,
+    "resolution.torrent"
+  );
   const resolutionStream = await storageService.getObject(
     BUCKETS.MOVIES,
-    getStoragePath(
-      movie.tmdbId.toString(),
-      "resolutions",
-      resolutionId,
-      "resolution.torrent"
-    )
+    torrentObjectPath
   );
   const torrentBuf = await buffer(resolutionStream);
   const isMagnet = torrentBuf.toString("utf-8").startsWith("magnet:");
@@ -344,24 +345,34 @@ export const downloadMovie = async (
     ? torrentBuf.toString("utf-8")
     : torrentBuf;
 
-  const { infoHash, metadata } = await engine.addTorrent(torrentId);
-  if (dbResolution.infoHash !== infoHash) {
-    await prisma.resolution.update({
-      where: { id: resolutionId },
-      data: { infoHash },
-    });
-  }
-
-  const addingMessage = `Adding ${isMagnet ? "magnet" : "torrent"} for movie ${movie.tmdbId} resolution ${dbResolution.resolution} (${dbResolution.indexerName}), infoHash=${infoHash}`;
-  hypertubeLogger.info(addingMessage);
-  reportJobLog(job, addingMessage);
-
+  const { infoHash, metadata, torrentFile } = await engine.addTorrent(torrentId);
   const scratchDir = path.join(
     env.TORRENT_SCRATCH_DIR ?? path.join(os.tmpdir(), "hypertube-downloader"),
     resolutionId
   );
 
   try {
+    if (dbResolution.infoHash !== infoHash) {
+      await prisma.resolution.update({
+        where: { id: resolutionId },
+        data: { infoHash },
+      });
+    }
+    if (torrentFile) {
+      // Cache the swarm-fetched metadata in place of the magnet, so seed
+      // reconciliation can resume seeding it after a restart.
+      await storageService.putObject(
+        BUCKETS.MOVIES,
+        torrentObjectPath,
+        torrentFile,
+        torrentFile.length
+      );
+    }
+
+    const addingMessage = `Adding ${isMagnet ? "magnet" : "torrent"} for movie ${movie.tmdbId} resolution ${dbResolution.resolution} (${dbResolution.indexerName}), infoHash=${infoHash}`;
+    hypertubeLogger.info(addingMessage);
+    reportJobLog(job, addingMessage);
+
     const selected = selectTargetFiles(metadata.files);
     if (!selected) {
       throw new Error(

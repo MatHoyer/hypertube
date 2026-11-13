@@ -2,9 +2,11 @@ import { hypertubeLogger } from "@hypertube/libs";
 import type { IStorageService } from "@hypertube/server-core";
 import { resolveListenPort } from "./listen-port.js";
 import {
+  buildTorrentFile,
   fetchMetadataFromPeer,
   parseTorrentIdentifier,
   stopMetadataFetch,
+  type FetchedMetadata,
   type TorrentFileMeta,
   type TorrentMetadata,
 } from "./metadata.js";
@@ -55,16 +57,16 @@ const MAGNET_METADATA_TIMEOUT_MS = 5 * 60 * 1000;
 const fetchMetadataFromSwarm = (
   pool: PeerConnectionPool,
   infoHash: string
-): Promise<TorrentMetadata> =>
+): Promise<FetchedMetadata> =>
   new Promise((resolve, reject) => {
     const onWire = (connection: PeerConnection) => {
       fetchMetadataFromPeer(connection.wire, infoHash).then(
-        (metadata) => {
+        (fetched) => {
           clearTimeout(timeout);
           pool.off("wire", onWire);
           // Stop every other wire from fetching metadata we now have.
           for (const peer of pool.connections) stopMetadataFetch(peer.wire);
-          resolve(metadata);
+          resolve(fetched);
         },
         () => {} // this peer can't serve it; keep waiting for others
       );
@@ -79,6 +81,8 @@ const fetchMetadataFromSwarm = (
 export type AddedTorrent = {
   infoHash: string;
   metadata: TorrentMetadata;
+  /** Set only when the metadata was just fetched from the swarm (magnet): a .torrent the caller should persist so later restarts can parse it locally. */
+  torrentFile?: Buffer;
 };
 
 /**
@@ -111,11 +115,14 @@ export const addTorrent = async (
   const pool = new PeerConnectionPool({ infoHash, peerId, discovery });
 
   let metadata: TorrentMetadata;
+  let torrentFile: Buffer | undefined;
   try {
     if (identifier.kind === "full") {
       metadata = identifier.metadata;
     } else {
-      metadata = await fetchMetadataFromSwarm(pool, infoHash);
+      const fetched = await fetchMetadataFromSwarm(pool, infoHash);
+      metadata = { ...fetched.metadata, announce };
+      torrentFile = await buildTorrentFile(fetched.torrentFile, announce);
     }
   } catch (error) {
     discovery.destroy();
@@ -131,7 +138,7 @@ export const addTorrent = async (
     pieceManager: null,
     stoppedDownloading: false,
   });
-  return { infoHash, metadata };
+  return { infoHash, metadata, torrentFile };
 };
 
 const getHandle = (infoHash: string): TorrentHandle => {
