@@ -269,6 +269,8 @@ export class PeerConnectionPool extends EventEmitter {
   /** Reserved while a dial is in flight — not yet handshaken, but already counted against `concurrency` so we don't over-dial. */
   private readonly pending = new Set<string>();
   private readonly active = new Map<string, PeerConnection>();
+  /** Keys in `active` that dialed us — they don't take a dial-out slot. */
+  private readonly inbound = new Set<string>();
   private lastRefreshAt = 0;
   private destroyed = false;
   /** pump() otherwise only runs on dial/close events — a pool whose few peers stay connected would never ask discovery for more. */
@@ -295,7 +297,7 @@ export class PeerConnectionPool extends EventEmitter {
   }
 
   private get inFlight(): number {
-    return this.pending.size + this.active.size;
+    return this.pending.size + this.active.size - this.inbound.size;
   }
 
   /** Connections already handshaken — for consumers that start listening for 'wire' after some peers connected. */
@@ -366,6 +368,7 @@ export class PeerConnectionPool extends EventEmitter {
       return;
     }
     this.active.set(key, connection);
+    this.inbound.add(key);
     connection.once("close", () => this.retire(key, connection.address));
     connection.once("error", () => this.retire(key, connection.address));
     this.emit("wire", connection);
@@ -373,6 +376,7 @@ export class PeerConnectionPool extends EventEmitter {
 
   private retire(key: string, peer: PeerAddress): void {
     if (!this.active.delete(key)) return;
+    this.inbound.delete(key);
     this.emit("wireClosed", peer);
     this.pump();
   }
@@ -387,5 +391,6 @@ export class PeerConnectionPool extends EventEmitter {
       connection.destroy();
     }
     this.active.clear();
+    this.inbound.clear();
   }
 }
