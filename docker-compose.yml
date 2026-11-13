@@ -49,6 +49,10 @@ services:
       - S3_ROOT_USER=${S3_ROOT_USER}
       - S3_ROOT_PASSWORD=${S3_ROOT_PASSWORD}
       - CLIENT_URL=${CLIENT_URL}
+    # Mounted over the image's copy so a stale s3-init image (`up` doesn't
+    # rebuild) still creates buckets added since, e.g. torrent-pieces.
+    volumes:
+      - ./scripts/s3-init.sh:/s3-init.sh:ro
     restart: no
 
 volumes:
