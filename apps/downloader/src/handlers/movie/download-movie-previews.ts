@@ -30,7 +30,7 @@ const hasMoviePreview = async (movieId: string) => {
   }
 };
 
-const downloadMoviePreview = ({
+const downloadMoviePreview = async ({
   movieId,
   stream,
   movieMetadata,
@@ -44,11 +44,26 @@ const downloadMoviePreview = ({
     tileHeight = movieMetadata.height * (TILE_WIDTH / movieMetadata.width);
   }
 
-  const uploadStream = new PassThrough();
+  const metadata: TpreviewMetadata = {
+    cols: COLS,
+    rows: ROWS,
+    width: TILE_WIDTH * COLS,
+    height: tileHeight * ROWS,
+    "tile-width": TILE_WIDTH,
+    "tile-height": tileHeight,
+  };
 
-  return new Promise<void>((resolve, reject) => {
+  const uploadStream = new PassThrough();
+  // Upload must consume ffmpeg's output while it runs: started only on
+  // 'end', a jpeg bigger than the pipe buffers blocked ffmpeg's stdout
+  // forever and 'end' never came.
+  const upload = putPreviewToObjectStockage(movieId, metadata, uploadStream);
+
+  const conversion = new Promise<void>((resolve, reject) => {
     ffmpeg(stream)
-      .inputOptions(["-threads", "1"])
+      // Decode keyframes only: 100 thumbnails don't need every frame (~40x
+      // faster than a full decode).
+      .inputOptions(["-threads", "1", "-skip_frame", "nokey"])
       .outputOptions([
         "-vf",
         `fps=${(COLS * ROWS) / movieMetadata.duration},scale=${TILE_WIDTH}:${tileHeight},tile=${COLS}x${ROWS}`,
@@ -58,27 +73,18 @@ const downloadMoviePreview = ({
       .on("start", () => {
         hypertubeLogger.info(`Start download preview for : ${movieId}`);
       })
-      .on("end", async () => {
-        const metadata: TpreviewMetadata = {
-          cols: COLS,
-          rows: ROWS,
-          width: TILE_WIDTH * COLS,
-          height: tileHeight * ROWS,
-          "tile-width": TILE_WIDTH,
-          "tile-height": tileHeight,
-        };
-
-        await putPreviewToObjectStockage(movieId, metadata, uploadStream);
-        hypertubeLogger.info(`Finish download preview for : ${movieId}`);
-        resolve();
-      })
+      .on("end", () => resolve())
       .on("error", (e) => {
         hypertubeLogger.error(`Movie preview error : ${e.message}`);
-        reject();
+        uploadStream.destroy(e);
+        reject(e);
       })
       .format("image2")
       .pipe(uploadStream, { end: true });
   });
+
+  await Promise.all([conversion, upload]);
+  hypertubeLogger.info(`Finish download preview for : ${movieId}`);
 };
 
 const putPreviewToObjectStockage = async (

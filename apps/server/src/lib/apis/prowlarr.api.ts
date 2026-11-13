@@ -201,9 +201,17 @@ export class ProwlarrApi {
   private async fetchTorrentFile(downloadUrl: string): Promise<Buffer> {
     const url = this.resolveDownloadUrl(downloadUrl);
     try {
-      const res = await fetch(url, {
+      // Prowlarr answers magnet-only releases with a 301 to the magnet URI,
+      // which fetch can't follow; elsewhere, don't forward the API key.
+      let res = await fetch(url, {
         headers: { "X-Api-Key": env.PROWLARR_API_KEY },
+        redirect: "manual",
       });
+      const location = res.headers.get("location");
+      if (location && isMagnetLink(location)) {
+        return Buffer.from(location.trim(), "utf-8");
+      }
+      if (location) res = await fetch(new URL(location, url));
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }

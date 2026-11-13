@@ -1,12 +1,31 @@
-import { formatUnknownError, newUTCDate, TLogger } from "@hypertube/libs";
+import {
+  DownloadStates,
+  formatUnknownError,
+  newUTCDate,
+  TLogger,
+} from "@hypertube/libs";
 import { subMonths } from "date-fns";
 import { prisma } from "../prisma.js";
+import { getMovieQueue } from "../queues/downloader.js";
+import { MOVIE_QUEUE_JOB_NAMES } from "../redis/const.js";
 import { BUCKETS } from "../services/StorageService/const.js";
 import { IStorageService } from "../services/StorageService/IStorageService.js";
 import { cronUTC } from "./cronUTC.js";
 
 const DELETE_MOVIES_MONTHLY_CRON_EXPRESSION = "0 0 0 * * *";
 const DELETE_MOVIES_MONTHLY_CRON_NAME = "Delete movies monthly";
+
+// Never delete a movie mid-download: it would wipe the pieces under the live
+// job and the row its completion handler is about to update.
+const NO_ACTIVE_DOWNLOAD = {
+  resolutions: {
+    none: {
+      downloadState: {
+        in: [DownloadStates.WAITING, DownloadStates.DOWNLOADING],
+      },
+    },
+  },
+};
 
 const deleteMoviesMonthlyCallback =
   (storageService: IStorageService) => async (localLogger: TLogger) => {
@@ -17,7 +36,9 @@ const deleteMoviesMonthlyCallback =
         usedAt: {
           lt: subMonths(newUTCDate(), 1),
         },
+        ...NO_ACTIVE_DOWNLOAD,
       },
+      include: { resolutions: true },
     });
 
     if (moviesToDelete.length === 0) {
@@ -37,6 +58,38 @@ const deleteMoviesMonthlyCallback =
           `Error deleting movie folder: ${formatUnknownError(error)}`
         );
       }
+
+      // Stop seeding and purge raw torrent piece data. Deletes the S3 prefix
+      // first so no live downloader can re-verify pieces we're about to remove.
+      for (const resolution of movie.resolutions) {
+        if (!resolution.infoHash) continue;
+
+        try {
+          await storageService.removeObjectsByPrefix(
+            BUCKETS.TORRENT_PIECES,
+            resolution.infoHash
+          );
+        } catch (error) {
+          localLogger.error(
+            `Error deleting torrent piece store for ${resolution.infoHash}: ${formatUnknownError(error)}`
+          );
+        }
+
+        // Only finished downloads seed; a failed one may still have left
+        // pieces in the store (purged above), but nothing to stop.
+        if (resolution.downloadState !== DownloadStates.DOWNLOADED) continue;
+        try {
+          await getMovieQueue().produce(
+            MOVIE_QUEUE_JOB_NAMES.STOP_SEEDING,
+            { infoHash: resolution.infoHash },
+            { removeOnComplete: true, removeOnFail: true }
+          );
+        } catch (error) {
+          localLogger.error(
+            `Error enqueueing stop-seeding job for ${resolution.infoHash}: ${formatUnknownError(error)}`
+          );
+        }
+      }
     }
 
     const deletedMovies = await prisma.movie.deleteMany({
@@ -44,6 +97,8 @@ const deleteMoviesMonthlyCallback =
         id: {
           in: moviesToDelete.map((movie) => movie.id),
         },
+        // A download may have been requested while we were purging.
+        ...NO_ACTIVE_DOWNLOAD,
       },
     });
 

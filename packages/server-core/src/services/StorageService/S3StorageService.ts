@@ -9,6 +9,7 @@ import {
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { Readable } from "stream";
+import { buffer } from "stream/consumers";
 import { env } from "../../env.js";
 import { IStorageService } from "./IStorageService.js";
 
@@ -89,7 +90,12 @@ export class S3StorageService implements IStorageService {
       new PutObjectCommand({
         Bucket: bucketName,
         Key: objectName,
-        Body: stream,
+        // PutObject can't stream a body of unknown length; callers only omit
+        // size for small objects (previews, subtitles), so buffer those.
+        Body:
+          size === undefined && stream instanceof Readable
+            ? await buffer(stream)
+            : stream,
         ContentLength: size,
         ContentType: contentType !== undefined ? String(contentType) : undefined,
         Metadata: Object.keys(stringMetaData).length ? stringMetaData : undefined,
@@ -110,6 +116,23 @@ export class S3StorageService implements IStorageService {
     bucketName,
     prefix
   ) => {
+    const names = await this.listObjectNamesByPrefix(bucketName, prefix);
+    if (names.length === 0) return;
+    for (let i = 0; i < names.length; i += REMOVE_BATCH) {
+      const chunk = names.slice(i, i + REMOVE_BATCH);
+      await this.s3Client.send(
+        new DeleteObjectsCommand({
+          Bucket: bucketName,
+          Delete: { Objects: chunk.map((Key) => ({ Key })) },
+        })
+      );
+    }
+  };
+
+  listObjectNamesByPrefix: IStorageService["listObjectNamesByPrefix"] = async (
+    bucketName,
+    prefix
+  ) => {
     const normalized = prefix.endsWith("/") ? prefix : `${prefix}/`;
     const names: string[] = [];
     let continuationToken: string | undefined;
@@ -126,17 +149,7 @@ export class S3StorageService implements IStorageService {
       }
       continuationToken = res.NextContinuationToken;
     } while (continuationToken);
-
-    if (names.length === 0) return;
-    for (let i = 0; i < names.length; i += REMOVE_BATCH) {
-      const chunk = names.slice(i, i + REMOVE_BATCH);
-      await this.s3Client.send(
-        new DeleteObjectsCommand({
-          Bucket: bucketName,
-          Delete: { Objects: chunk.map((Key) => ({ Key })) },
-        })
-      );
-    }
+    return names;
   };
 
   presignedGetObject: IStorageService["presignedGetObject"] = async (

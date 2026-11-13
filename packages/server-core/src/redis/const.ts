@@ -5,6 +5,7 @@ export const MOVIE_QUEUE = "movie";
 export const MOVIE_QUEUE_JOB_NAMES = {
   DOWNLOAD_MOVIE: "download-movie",
   PREVIEW_MOVIE: "preview-movie",
+  STOP_SEEDING: "stop-seeding",
 } as const;
 
 export type TDownloadJobData = {
@@ -15,4 +16,8 @@ export type TDownloadJobData = {
 export type TPreviewJobData = {
   movie: TMovieSchema;
   resolutionId: TResolutionSchema["id"];
+};
+
+export type TStopSeedingJobData = {
+  infoHash: string;
 };

@@ -282,6 +282,7 @@ describe("ProwlarrApi", () => {
         if (url.includes("/download/torrent")) {
           return Promise.resolve({
             ok: true,
+            headers: new Headers(),
             arrayBuffer: async () => torrentBuffer.buffer,
           });
         }
@@ -304,12 +305,46 @@ describe("ProwlarrApi", () => {
       expect(downloadCall?.[0]).toBe("http://localhost:9696/download/torrent");
       expect(downloadCall?.[1]).toEqual({
         headers: { "X-Api-Key": "test-api-key" },
+        redirect: "manual",
       });
       expect(mockPutObject).toHaveBeenCalledWith(
         "movies",
         "12345/resolutions/resolution-id-1/resolution.torrent",
         expect.any(Buffer)
       );
+    });
+
+    it("stores the magnet when the download link redirects to one", async () => {
+      const magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567";
+      const release = makeRelease({
+        title: "Movie 1080p BluRay",
+        downloadUrl: "http://127.0.0.1:9696/download/torrent",
+        guid: "guid-lime-1080p",
+      });
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes("/download/torrent")) {
+          return Promise.resolve({
+            ok: false,
+            status: 301,
+            headers: new Headers({ location: magnet }),
+          });
+        }
+        return Promise.resolve({ ok: true, json: async () => [release] });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const api = new ProwlarrApi();
+      await api.downloadTorrent({
+        movie: { tmdbId: 12345, imdbId: "tt1234567" } as never,
+        resolution: makeResolution() as never,
+        resolutionId: "resolution-id-1",
+        search: searchTarget,
+      });
+
+      const stored = mockPutObject.mock.calls.find((call) =>
+        String(call[1]).endsWith("resolution.torrent")
+      );
+      expect(stored?.[2].toString("utf-8")).toBe(magnet);
     });
 
     it("stores magnet links directly without fetching", async () => {

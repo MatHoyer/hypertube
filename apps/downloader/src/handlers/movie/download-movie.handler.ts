@@ -9,19 +9,28 @@ import {
   prisma,
   TDownloadJobData,
 } from "@hypertube/server-core";
-import { Job } from "bullmq";
+import { Job, UnrecoverableError } from "bullmq";
 import { notifySubscribers } from "../../notifications/notifySubscriber.js";
 import { downloadMovie } from "./movie-downloader.js";
 
-export const downloadMovieHandler = async (job: Job<TDownloadJobData>) => {
+export const downloadMovieHandler = async (
+  job: Job<TDownloadJobData>,
+  token?: string
+) => {
   hypertubeLogger.info(`[${job.data.movie.id}] Download torrent job started`);
 
-  await prisma.resolution.update({
+  const { count } = await prisma.resolution.updateMany({
     where: { id: job.data.resolutionId },
     data: { downloadState: DownloadStates.DOWNLOADING },
   });
+  if (count === 0) {
+    // Deleted while queued (e.g. movie cleanup cron): no retry can fix that.
+    throw new UnrecoverableError(
+      `Resolution ${job.data.resolutionId} not found`
+    );
+  }
 
-  return downloadMovie(job);
+  return downloadMovie(job, token);
 };
 
 export const downloadMovieSuccessHandler = async (
@@ -29,7 +38,9 @@ export const downloadMovieSuccessHandler = async (
 ) => {
   hypertubeLogger.info(`[${job.data.movie.id}] Moviedownload success`);
 
-  await prisma.resolution.update({
+  // updateMany: the row may have been deleted mid-download (movie cleanup
+  // cron); update() would throw P2025 out of an async event listener.
+  const { count } = await prisma.resolution.updateMany({
     where: {
       id: job.data.resolutionId,
     },
@@ -37,6 +48,12 @@ export const downloadMovieSuccessHandler = async (
       downloadState: DownloadStates.DOWNLOADED,
     },
   });
+  if (count === 0) {
+    hypertubeLogger.warn(
+      `[${job.data.movie.id}] Resolution ${job.data.resolutionId} no longer exists, skipping post-download steps`
+    );
+    return;
+  }
   try {
     await notifySubscribers(job.data.movie.id, DownloadStates.DOWNLOADED);
   } catch (error) {
@@ -56,7 +73,7 @@ export const downloadMovieFailureHandler = async (
   err: Error
 ) => {
   hypertubeLogger.error(
-    `[${job?.data.movie.id}] Movie download failed: ${formatUnknownError(err)}`
+    `[${job?.data.movie.id}] Movie download failed (attempt ${job?.attemptsMade}/${job?.opts.attempts ?? 1}): ${formatUnknownError(err)}`
   );
   if (!job?.data.movie.id || !job?.data.resolutionId) {
     hypertubeLogger.error(
@@ -65,7 +82,19 @@ export const downloadMovieFailureHandler = async (
     return;
   }
 
-  await prisma.resolution.update({
+  // BullMQ retries (see downloadTorrent.ts's producer opts) resume from the
+  // S3 piece store rather than restarting, so an intermediate attempt
+  // failing isn't a real "not downloaded" state — only flip the DB once
+  // BullMQ actually gave up. moveToFailed sets finishedOn only on a final
+  // failure (attempts exhausted, or an UnrecoverableError), not on a retry.
+  if (!job.finishedOn) {
+    hypertubeLogger.info(
+      `[${job.data.movie.id}] Attempt ${job.attemptsMade}/${job.opts.attempts ?? 1} failed, BullMQ will retry`
+    );
+    return;
+  }
+
+  await prisma.resolution.updateMany({
     where: {
       id: job.data.resolutionId,
     },
