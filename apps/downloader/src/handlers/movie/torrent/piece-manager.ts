@@ -154,6 +154,7 @@ export class PieceManager extends EventEmitter implements SeedSource {
       if (this.pieceState.get(index) !== "needed") continue;
       const peer = this.pickPeerFor(index);
       if (!peer) continue;
+      if (!this.partialBlocks.has(index) && !this.makeRoomForNewPiece()) break;
       this.pieceState.set(index, "in-flight");
       this.inFlightPieceCount++;
       this.inFlightPerPeer.set(peer, (this.inFlightPerPeer.get(peer) ?? 0) + 1);
@@ -165,6 +166,17 @@ export class PieceManager extends EventEmitter implements SeedSource {
         this.scheduleMore();
       });
     }
+  }
+
+  /** Pieces whose peer dropped keep their blocks, so peer churn would grow partialBlocks without bound — cap it, evicting the oldest piece nobody is downloading right now. */
+  private makeRoomForNewPiece(): boolean {
+    if (this.partialBlocks.size < MAX_PIECES_IN_FLIGHT) return true;
+    for (const index of this.partialBlocks.keys()) {
+      if (this.pieceState.get(index) === "in-flight") continue;
+      this.partialBlocks.delete(index);
+      return true;
+    }
+    return false;
   }
 
   private async downloadPiece(peer: PeerConnection, index: number): Promise<void> {
@@ -179,6 +191,8 @@ export class PieceManager extends EventEmitter implements SeedSource {
     const missingBlocks = Array.from({ length: blockCount }, (_, i) => i).filter(
       (i) => !pieceBlocks[i]
     );
+    /** Some blocks came from an earlier attempt, possibly another peer — a bad hash can't be pinned on this one. */
+    const resumedFromPartial = missingBlocks.length < blockCount;
 
     try {
       let cursor = 0;
@@ -201,6 +215,13 @@ export class PieceManager extends EventEmitter implements SeedSource {
       const pieceBuffer = Buffer.concat(pieceBlocks, pieceLength);
       const hash = createHash("sha1").update(pieceBuffer).digest("hex");
       if (hash !== this.metadata.pieces[index]) {
+        this.pieceState.set(index, "needed");
+        if (resumedFromPartial) {
+          hypertubeLogger.warn(
+            `Torrent ${this.metadata.infoHash}: piece ${index} (assembled across attempts) failed hash verification — discarding it and re-requesting`
+          );
+          return;
+        }
         hypertubeLogger.warn(
           `Torrent ${this.metadata.infoHash}: piece ${index} failed hash verification from ${peer.address.host}:${peer.address.port} — re-requesting from a different peer`
         );
@@ -210,7 +231,6 @@ export class PieceManager extends EventEmitter implements SeedSource {
           this.failedPeersByPiece.set(index, excluded);
         }
         excluded.add(peer);
-        this.pieceState.set(index, "needed");
         return;
       }
 
