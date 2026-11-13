@@ -158,11 +158,22 @@ export class PieceManager extends EventEmitter implements SeedSource {
       this.pieceState.set(index, "in-flight");
       this.inFlightPieceCount++;
       this.inFlightPerPeer.set(peer, (this.inFlightPerPeer.get(peer) ?? 0) + 1);
-      this.downloadPiece(peer, index).finally(() => {
-        this.inFlightPieceCount--;
+      let peerReleased = false;
+      const releasePeer = () => {
+        if (peerReleased) return;
+        peerReleased = true;
         // Absent once the peer closed — re-setting it would keep the dead connection alive forever.
         const peerInFlight = this.inFlightPerPeer.get(peer);
         if (peerInFlight !== undefined) this.inFlightPerPeer.set(peer, Math.max(0, peerInFlight - 1));
+      };
+      // The peer's slot frees as soon as its blocks are in, not after our disk write + S3 upload.
+      const onBlocksReceived = () => {
+        releasePeer();
+        this.scheduleMore();
+      };
+      this.downloadPiece(peer, index, onBlocksReceived).finally(() => {
+        this.inFlightPieceCount--;
+        releasePeer();
         this.scheduleMore();
       });
     }
@@ -179,7 +190,11 @@ export class PieceManager extends EventEmitter implements SeedSource {
     return false;
   }
 
-  private async downloadPiece(peer: PeerConnection, index: number): Promise<void> {
+  private async downloadPiece(
+    peer: PeerConnection,
+    index: number,
+    onBlocksReceived: () => void
+  ): Promise<void> {
     const pieceLength = pieceByteLength(this.metadata, index);
     const blockCount = Math.ceil(pieceLength / BLOCK_LENGTH);
     let blocks = this.partialBlocks.get(index);
@@ -212,6 +227,7 @@ export class PieceManager extends EventEmitter implements SeedSource {
       );
 
       this.partialBlocks.delete(index);
+      onBlocksReceived();
       const pieceBuffer = Buffer.concat(pieceBlocks, pieceLength);
       const hash = createHash("sha1").update(pieceBuffer).digest("hex");
       if (hash !== this.metadata.pieces[index]) {
